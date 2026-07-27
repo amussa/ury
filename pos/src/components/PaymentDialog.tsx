@@ -28,6 +28,7 @@ interface PaymentDialogProps {
 const PaymentDialog: React.FC<PaymentDialogProps> = ({
   onClose,
   grandTotal,
+  roundedTotal,
   invoice,
   customer,
   posProfile,
@@ -309,4 +310,4 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
   );
 };
 
-export default PaymentDialog; 
+export default PaymentDialog;
