@@ -45,6 +45,11 @@ export interface Customer {
   phone: string;
 }
 
+const getDefaultCustomer = (profile: PosProfileCombined | null): Customer | null =>
+  profile?.customer
+    ? { id: profile.customer, name: profile.customer, phone: '' }
+    : null;
+
 export interface OrderItem extends MenuItem {
   quantity: number;
   selectedVariant?: { id: string; name: string; price: number };
@@ -241,15 +246,21 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       const cached = sessionStorage.getItem('posProfile');
       if (cached) {
         const profile = JSON.parse(cached);
-        set({ 
-          posProfile: profile, 
-          profileLoading: false,
-          currency: profile.currency || 'INR'
-        });
-        if (!storage.getItem('currencySymbol')) {
-          await get().fetchCurrencySymbol();
+        // Profiles cached before a default customer was configured must be
+        // refreshed, otherwise the POS keeps asking for a customer forever.
+        if (profile.customer) {
+          set({
+            posProfile: profile,
+            selectedCustomer: get().selectedCustomer ?? getDefaultCustomer(profile),
+            profileLoading: false,
+            currency: profile.currency || 'INR'
+          });
+          if (!storage.getItem('currencySymbol')) {
+            await get().fetchCurrencySymbol();
+          }
+          return;
         }
-        return;
+        sessionStorage.removeItem('posProfile');
       }
 
       set({ profileLoading: true, error: null });
@@ -258,6 +269,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       sessionStorage.setItem('posProfile', JSON.stringify(combinedProfile));
       set({ 
         posProfile: combinedProfile, 
+        selectedCustomer: get().selectedCustomer ?? getDefaultCustomer(combinedProfile),
         profileLoading: false,
         currency: combinedProfile.currency || 'INR'
       });
@@ -631,7 +643,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         set({ 
           tableOrder: null,
           activeOrders: [],
-          selectedCustomer: null,
+          selectedCustomer: getDefaultCustomer(get().posProfile),
           isUpdatingOrder: false,
           orderId: null,
         });
@@ -641,7 +653,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         error: 'Failed to load table order',
         tableOrder: null,
         activeOrders: [],
-        selectedCustomer: null,
+        selectedCustomer: getDefaultCustomer(get().posProfile),
         isUpdatingOrder: false,
         orderId: null,
       });
@@ -654,7 +666,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
     set({ 
       tableOrder: null,
       activeOrders: [],
-      selectedCustomer: null,
+      selectedCustomer: getDefaultCustomer(get().posProfile),
       isUpdatingOrder: false,
       orderId: null,
     });
@@ -671,7 +683,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
     const { fetchMenuItems } = get();
     
     set({
-      selectedCustomer: null,
+      selectedCustomer: getDefaultCustomer(get().posProfile),
       selectedTable: null,
       selectedRoom: null,
       selectedAggregator: null,
@@ -698,4 +710,4 @@ export const usePOSStore = create<POSStore>((set, get) => ({
     const state = get();
     return state.orderLoading;
   }
-})); 
+}));
