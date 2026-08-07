@@ -16,6 +16,19 @@ from frappe import cache
 class URYOrder(Document):
     pass
 
+
+def set_pos_profile(invoice, pos_profile):
+    if not pos_profile:
+        frappe.throw(_("POS Profile is required."))
+    if invoice.pos_profile and invoice.pos_profile != pos_profile:
+        frappe.throw(
+            _("POS Profile cannot be changed from {0} to {1} on an existing order.").format(
+                frappe.bold(invoice.pos_profile),
+                frappe.bold(pos_profile),
+            )
+        )
+    invoice.pos_profile = pos_profile
+
 @frappe.whitelist()
 def merge_free_tables(table1, table2):
     """Merges two tables in the same room; allows one occupied and one free."""
@@ -858,7 +871,7 @@ def sync_order(
     if comments:
         invoice.custom_comments = comments
     invoice.no_of_pax = no_of_pax
-    invoice.pos_profile = pos_profile
+    set_pos_profile(invoice, pos_profile)
     invoice.cashier = cashier
     invoice.waiter = waiter
     invoice.custom_aggregator_id = aggregator_id
@@ -961,7 +974,6 @@ def sync_order(
                     "URY Table", merged_table.strip(), {"occupied": 1, "latest_invoice_time": invoice.creation}
                 )
 
-    invoice.db_set("owner", cashier)
     return invoice.as_dict()
 
 
@@ -1221,7 +1233,7 @@ def make_invoice(customer, payments, cashier, pos_profile,owner, additionalDisco
         invoice.restaurant = restaurant
 
     invoice.customer = customer
-    invoice.pos_profile = pos_profile
+    set_pos_profile(invoice, pos_profile)
     invoice.additional_discount_percentage=additionalDiscount
     invoice.calculate_taxes_and_totals()
 
@@ -1267,7 +1279,6 @@ def make_invoice(customer, payments, cashier, pos_profile,owner, additionalDisco
                 "payments", dict(mode_of_payment=d["mode_of_payment"], amount=d["amount"])
             )
 
-    # invoice.owner = owner
     invoice.save()
     try:
         invoice.submit()

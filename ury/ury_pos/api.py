@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from datetime import date, datetime, timedelta
 from frappe.utils import validate_phone_number
+from ury.ury_pos.cashier import get_single_cashier_opening
 
 
 #GetTable  decripted temporarily
@@ -705,9 +706,19 @@ def getPosProfile():
                 else:
                     cashier = pos_opened_cashier    
                 
-        else:    
-            cashier = get_cashier.applicable_for_users[0].user
-            owner = get_cashier.applicable_for_users[0].user
+        else:
+            opening = get_single_cashier_opening(
+                pos_profile_name,
+                required=False,
+            )
+            if opening:
+                cashier = opening.user
+                owner = opening.user
+            else:
+                # The legacy POS uses this value to create the opening entry.
+                # POS Invoice validation still blocks sales until it is Open.
+                cashier = frappe.session.user
+                owner = frappe.session.user
         
         qz_print = pos_profiles.qz_print
         print_type = None

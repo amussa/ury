@@ -2,6 +2,11 @@ import frappe
 from datetime import datetime
 from frappe.utils import now_datetime, get_time,now
 from ury.ury.doctype.ury_order.ury_order import release_merge_cluster_tables
+from ury.ury_pos.cashier import (
+    POSOpeningError,
+    assign_single_cashier_from_opening,
+    persist_cashier_owner,
+)
 
 
 def before_insert(doc, method):
@@ -11,12 +16,14 @@ def before_insert(doc, method):
 
 
 def validate(doc, method):
+    assign_single_cashier_from_opening(doc)
     validate_invoice(doc, method)
     validate_customer(doc, method)
     validate_price_list(doc, method)
 
 
 def before_submit(doc, method):
+    assign_single_cashier_from_opening(doc)
     calculate_and_set_times(doc, method)
     validate_invoice_print(doc, method)
     ro_reload_submit(doc, method)
@@ -282,6 +289,8 @@ def sync_merged_invoice(doc):
             }
         )
 
+    except POSOpeningError:
+        raise
     except Exception:
         frappe.log_error(
             frappe.get_traceback(),
@@ -293,6 +302,7 @@ def sync_merged_invoice(doc):
 
 
 def on_update(doc, method):
+    persist_cashier_owner(doc)
     sync_merged_invoice(doc)
 
 
