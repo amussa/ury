@@ -8,18 +8,11 @@ import { getCustomerGroups, getCustomerTerritories } from '../lib/customer-api';
 import { DEFAULT_ORDER_TYPE, OrderType } from '../data/order-types';
 import { getTableOrder, TableOrder } from '../lib/order-api';
 import { getPaymentModes } from '../lib/payment-api';
+import { getStockAvailability, StockAvailability } from '../lib/stock-api';
 
 // Constants
 const MAX_QUANTITY = 99;
 const MIN_QUANTITY = 0;
-
-// Custom error class for cart operations
-class CartError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CartError';
-  }
-}
 
 // Extend the API MenuItem to include UI-specific properties
 export interface MenuItem extends Omit<APIMenuItem, 'rate' | 'item_image'> {
@@ -56,7 +49,28 @@ export interface OrderItem extends MenuItem {
   selectedAddons?: { id: string; name: string; price: number }[];
   uniqueId?: string;
   comment?: string;
+  configurationId?: string;
+  configurationRole?: 'main' | 'addon';
+  configuredAddons?: Array<{ id: string; name: string; price: number }>;
 }
+
+export type CartMutationFailureCode =
+  | 'invalid_quantity'
+  | 'quantity_limit'
+  | 'stock_check_failed'
+  | 'insufficient_stock';
+
+export type CartMutationResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code: CartMutationFailureCode;
+      itemCode?: string;
+      itemName?: string;
+      requestedQuantity?: number;
+      availableQuantity?: number;
+      stockUom?: string | null;
+    };
 
 export interface PaymentMode {
   id: string;
@@ -119,12 +133,15 @@ interface POSState {
   currencySymbol: string | null;
   isUpdatingOrder: boolean;
   orderId: string | null;
+  stockExcludeInvoice: string | null;
+  cartRevision: number;
   posProfile: PosProfileCombined | null;
   customerGroups: string[];
   territories: string[];
   tableOrder: TableOrder | null;
   isInitializing: boolean;
   orderComment: string;
+  stockByItem: Record<string, StockAvailability>;
 }
 
 interface POSStore extends POSState {
@@ -132,9 +149,12 @@ interface POSStore extends POSState {
   fetchAggregatorMenu: (aggregator: string) => Promise<void>;
   fetchCategories: () => Promise<void>;
   fetchPaymentModes: () => Promise<void>;
-  addToOrder: (item: OrderItem) => Promise<void>;
+  addToOrder: (item: OrderItem) => Promise<CartMutationResult>;
+  applyOrderItems: (items: OrderItem[], replaceUniqueIds?: string[]) => Promise<CartMutationResult>;
+  hydrateOrderItems: (items: OrderItem[], excludeInvoice?: string | null) => Promise<CartMutationResult>;
+  refreshStockForItems: (itemCodes: string[], excludeInvoice?: string | null, expectedRevision?: number) => Promise<CartMutationResult>;
   removeFromOrder: (uniqueId: string) => Promise<void>;
-  updateQuantity: (uniqueId: string, quantity: number) => Promise<void>;
+  updateQuantity: (uniqueId: string, quantity: number) => Promise<CartMutationResult>;
   clearOrder: () => Promise<void>;
   setSelectedCategory: (category: string) => void;
   setSearchQuery: (query: string) => void;
@@ -155,12 +175,13 @@ interface POSStore extends POSState {
   validateQuantity: (quantity: number) => boolean;
   getItemPrice: (item: OrderItem) => number;
   getItemQuantityFromCart: (item: MenuItem) => number;
+  getItemQuantityByCode: (itemCode: string) => number;
   loadTableOrder: (table: string) => Promise<void>;
   clearTableOrder: () => void;
   isMenuInteractionDisabled: () => boolean;
   isOrderInteractionDisabled: () => boolean;
   initializeApp: () => Promise<void>;
-  setOrderForUpdate: (orderId: string | null) => void;
+  setOrderForUpdate: (orderId: string | null, stockExcludeInvoice?: string | null) => void;
   resetOrderState: () => void;
   setSelectedAggregator: (aggregator: Aggregator | null) => void;
   setOrderComment: (comment: string) => void;
@@ -177,6 +198,80 @@ const calculateItemPrice = (item: OrderItem): number => {
   const addonsTotal = item.selectedAddons?.reduce((sum, addon) => sum + addon.price, 0) || 0;
   return basePrice + addonsTotal;
 };
+
+const SUCCESS_RESULT: CartMutationResult = { ok: true };
+
+const getItemCode = (item: Pick<OrderItem, 'item' | 'id'>): string => item.item || item.id;
+
+const getItemName = (item: Pick<OrderItem, 'item_name' | 'name'>): string =>
+  item.item_name || item.name;
+
+const normalizeStock = (stock: StockAvailability): StockAvailability => ({
+  ...stock,
+  available_qty: Number(stock.available_qty) || 0,
+  is_stock_item: Boolean(stock.is_stock_item),
+  negative_stock_allowed: Boolean(stock.negative_stock_allowed),
+  stock_uom: stock.stock_uom || null,
+});
+
+const stockFromMenuItem = (item: MenuItem): StockAvailability | null => {
+  if (typeof item.is_stock_item !== 'boolean' || typeof item.available_qty !== 'number') {
+    return null;
+  }
+
+  return normalizeStock({
+    item_code: item.item,
+    available_qty: item.available_qty,
+    is_stock_item: item.is_stock_item,
+    stock_uom: item.stock_uom || null,
+    negative_stock_allowed: Boolean(item.negative_stock_allowed),
+  });
+};
+
+const withStock = <T extends MenuItem>(item: T, stock?: StockAvailability): T =>
+  stock
+    ? {
+        ...item,
+        available_qty: stock.available_qty,
+        is_stock_item: stock.is_stock_item,
+        stock_uom: stock.stock_uom,
+        negative_stock_allowed: stock.negative_stock_allowed,
+      }
+    : item;
+
+const getQuantitiesByItemCode = (items: OrderItem[]): Record<string, number> =>
+  items.reduce<Record<string, number>>((totals, item) => {
+    const itemCode = getItemCode(item);
+    totals[itemCode] = (totals[itemCode] || 0) + item.quantity;
+    return totals;
+  }, {});
+
+const addItemsToSnapshot = (orders: OrderItem[], items: OrderItem[]): OrderItem[] => {
+  const nextOrders = [...orders];
+
+  items.forEach((item) => {
+    const uniqueId = item.uniqueId || generateUniqueId(item);
+    const existingItemIndex = nextOrders.findIndex(orderItem => orderItem.uniqueId === uniqueId);
+
+    if (existingItemIndex === -1) {
+      nextOrders.push({ ...item, uniqueId });
+      return;
+    }
+
+    const existingItem = nextOrders[existingItemIndex];
+    nextOrders[existingItemIndex] = {
+      ...existingItem,
+      ...item,
+      uniqueId,
+      quantity: existingItem.quantity + item.quantity,
+      comment: item.comment !== undefined ? item.comment : existingItem.comment,
+    };
+  });
+
+  return nextOrders;
+};
+
+let cartMutationQueue: Promise<void> = Promise.resolve();
 
 export const usePOSStore = create<POSStore>((set, get) => ({
   menuItems: [],
@@ -208,7 +303,10 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   isInitializing: true,
   isUpdatingOrder: false,
   orderId: null,
+  stockExcludeInvoice: null,
+  cartRevision: 0,
   orderComment: '',
+  stockByItem: {},
 
   initializeApp: async () => {
     try {
@@ -322,9 +420,43 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         description: item.description || '',
         special_dish: item.special_dish || 0,
         tax_rate: 0,
+        available_qty: Number(item.available_qty) || 0,
+        is_stock_item: Boolean(item.is_stock_item),
+        stock_uom: item.stock_uom || null,
+        negative_stock_allowed: Boolean(item.negative_stock_allowed),
       }));
 
-      set({ menuItems });
+      const stockByItem = menuItems.reduce<Record<string, StockAvailability>>((stocks, item) => {
+        const stock = stockFromMenuItem(item);
+        if (stock) stocks[item.item] = stock;
+        return stocks;
+      }, {});
+
+      set((state) => {
+        const effectiveStockByItem = { ...stockByItem };
+        if (state.isUpdatingOrder && state.orderId) {
+          state.activeOrders.forEach((item) => {
+            const itemCode = getItemCode(item);
+            if (state.stockByItem[itemCode]) {
+              effectiveStockByItem[itemCode] = state.stockByItem[itemCode];
+            }
+          });
+        }
+        return {
+          menuItems: menuItems.map(item => withStock(item, effectiveStockByItem[item.item])),
+          stockByItem: effectiveStockByItem,
+          activeOrders: state.activeOrders.map(item => withStock(item, effectiveStockByItem[getItemCode(item)])),
+        };
+      });
+
+      const currentState = get();
+      if (currentState.isUpdatingOrder && currentState.activeOrders.length > 0) {
+        await currentState.refreshStockForItems(
+          currentState.activeOrders.map(getItemCode),
+          currentState.stockExcludeInvoice,
+          currentState.cartRevision,
+        );
+      }
     } catch (error) {
       set({ error: 'Failed to load menu items' });
       console.error('Error loading menu items:', error);
@@ -336,7 +468,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   fetchAggregatorMenu: async (aggregator: string) => {
     try {
       set({ menuLoading: true, error: null });
-      const items = await getAggregatorMenu(aggregator);
+      const items = await getAggregatorMenu(aggregator, get().posProfile?.name);
       
       const menuItems: MenuItem[] = items.map((item: any) => ({
         ...item,
@@ -344,10 +476,45 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         name: item.item_name,
         image: item.item_image || null,
         price: typeof item.rate === 'string' ? parseFloat(item.rate) : item.rate || 0,
-        category: item.course
+        category: item.course,
+        available_qty: Number(item.available_qty) || 0,
+        is_stock_item: Boolean(item.is_stock_item),
+        stock_uom: item.stock_uom || null,
+        negative_stock_allowed: Boolean(item.negative_stock_allowed),
       }));
 
-      set({ menuItems, menuLoading: false });
+      const stockByItem = menuItems.reduce<Record<string, StockAvailability>>((stocks, item) => {
+        const stock = stockFromMenuItem(item);
+        if (stock) stocks[item.item] = stock;
+        return stocks;
+      }, {});
+
+      set((state) => {
+        const effectiveStockByItem = { ...stockByItem };
+        if (state.isUpdatingOrder && state.orderId) {
+          state.activeOrders.forEach((item) => {
+            const itemCode = getItemCode(item);
+            if (state.stockByItem[itemCode]) {
+              effectiveStockByItem[itemCode] = state.stockByItem[itemCode];
+            }
+          });
+        }
+        return {
+          menuItems: menuItems.map(item => withStock(item, effectiveStockByItem[item.item])),
+          stockByItem: effectiveStockByItem,
+          activeOrders: state.activeOrders.map(item => withStock(item, effectiveStockByItem[getItemCode(item)])),
+          menuLoading: false,
+        };
+      });
+
+      const currentState = get();
+      if (currentState.isUpdatingOrder && currentState.activeOrders.length > 0) {
+        await currentState.refreshStockForItems(
+          currentState.activeOrders.map(getItemCode),
+          currentState.stockExcludeInvoice,
+          currentState.cartRevision,
+        );
+      }
     } catch (error) {
       set({ error: 'Failed to load aggregator menu', menuLoading: false });
       console.error('Error loading aggregator menu:', error);
@@ -386,42 +553,194 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   },
 
   addToOrder: async (item: OrderItem) => {
+    return get().applyOrderItems([item]);
+  },
+
+  refreshStockForItems: async (itemCodes, excludeInvoice, expectedRevision) => {
+    const uniqueItemCodes = [...new Set(itemCodes.filter(Boolean))];
+    if (uniqueItemCodes.length === 0) return SUCCESS_RESULT;
+
+    const posProfile = get().posProfile;
+    if (!posProfile?.name) {
+      return { ok: false, code: 'stock_check_failed' };
+    }
+
     try {
-      if (!get().validateQuantity(item.quantity)) {
-        throw new CartError(`Quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`);
+      const responseStocks = await getStockAvailability(
+        posProfile.name,
+        uniqueItemCodes,
+        excludeInvoice,
+      );
+      const stocks = Object.fromEntries(
+        Object.entries(responseStocks).map(([itemCode, stock]) => [itemCode, normalizeStock(stock)]),
+      );
+
+      if (expectedRevision !== undefined && get().cartRevision !== expectedRevision) {
+        return { ok: false, code: 'stock_check_failed' };
       }
 
-      const uniqueId = generateUniqueId(item);
-      const existingItemIndex = get().activeOrders.findIndex(orderItem => orderItem.uniqueId === uniqueId);
+      const missingItemCode = uniqueItemCodes.find(itemCode => !stocks[itemCode]);
+      if (missingItemCode) {
+        return { ok: false, code: 'stock_check_failed', itemCode: missingItemCode };
+      }
 
-      if (existingItemIndex !== -1) {
-        const existingItem = get().activeOrders[existingItemIndex];
-        const newQuantity = existingItem.quantity + item.quantity;
-        const newComment = item.comment !== undefined ? item.comment : existingItem?.comment || "";
+      set((state) => ({
+        stockByItem: { ...state.stockByItem, ...stocks },
+        menuItems: state.menuItems.map(item => withStock(item, stocks[item.item])),
+        activeOrders: state.activeOrders.map(item => withStock(item, stocks[getItemCode(item)])),
+        selectedItem: state.selectedItem
+          ? withStock(state.selectedItem, stocks[state.selectedItem.item])
+          : null,
+      }));
 
-        if (!get().validateQuantity(newQuantity)) {
-          throw new CartError(`Cannot add item. Total quantity would exceed ${MAX_QUANTITY}`);
+      return SUCCESS_RESULT;
+    } catch (error) {
+      console.error('Failed to refresh stock availability:', error);
+      return { ok: false, code: 'stock_check_failed' };
+    }
+  },
+
+  applyOrderItems: (items, replaceUniqueIds = []) => {
+    const requestedRevision = get().cartRevision;
+    const operation = cartMutationQueue.then(async (): Promise<CartMutationResult> => {
+      if (get().cartRevision !== requestedRevision) {
+        return { ok: false, code: 'stock_check_failed' };
+      }
+      const invalidItem = items.find(item => !get().validateQuantity(item.quantity) || item.quantity <= 0);
+      if (invalidItem) {
+        return {
+          ok: false,
+          code: 'invalid_quantity',
+          itemCode: getItemCode(invalidItem),
+          itemName: getItemName(invalidItem),
+          requestedQuantity: invalidItem.quantity,
+        };
+      }
+
+      const replacedIds = new Set(replaceUniqueIds.filter(Boolean));
+      const buildProposal = () => {
+        const currentOrders = get().activeOrders;
+        const baseOrders = currentOrders.filter(item => !item.uniqueId || !replacedIds.has(item.uniqueId));
+        const proposedOrders = addItemsToSnapshot(baseOrders, items);
+        const currentQuantities = getQuantitiesByItemCode(currentOrders);
+        const proposedQuantities = getQuantitiesByItemCode(proposedOrders);
+        const increasedItemCodes = Object.keys(proposedQuantities).filter(
+          itemCode => proposedQuantities[itemCode] > (currentQuantities[itemCode] || 0) + Number.EPSILON,
+        );
+        return { proposedOrders, proposedQuantities, increasedItemCodes };
+      };
+
+      let proposal = buildProposal();
+      let overLimitItem = proposal.proposedOrders.find(item => !get().validateQuantity(item.quantity));
+      if (overLimitItem) {
+        return {
+          ok: false,
+          code: 'quantity_limit',
+          itemCode: getItemCode(overLimitItem),
+          itemName: getItemName(overLimitItem),
+          requestedQuantity: overLimitItem.quantity,
+        };
+      }
+
+      if (proposal.increasedItemCodes.length > 0) {
+        const { stockExcludeInvoice } = get();
+        const initiallyRequestedCodes = [...proposal.increasedItemCodes];
+        const refreshResult = await get().refreshStockForItems(
+          initiallyRequestedCodes,
+          stockExcludeInvoice,
+          requestedRevision,
+        );
+        if (!refreshResult.ok) {
+          const failedCode = refreshResult.itemCode || proposal.increasedItemCodes[0];
+          const failedItem = items.find(item => getItemCode(item) === failedCode);
+          return {
+            ...refreshResult,
+            itemCode: failedCode,
+            itemName: failedItem ? getItemName(failedItem) : failedCode,
+          };
         }
 
-        const newOrders = [...get().activeOrders];
-        newOrders[existingItemIndex] = {
-          ...existingItem,
-          quantity: newQuantity,
-          comment: newComment
-        };
-        
-        set({ activeOrders: newOrders });
-      } else {
-        const newOrders = [...get().activeOrders, { ...item, uniqueId }];
-        set({ activeOrders: newOrders });
+        // Stock requests are asynchronous. Rebuild from the latest cart so a
+        // removal/clear performed while the request was in flight is preserved.
+        proposal = buildProposal();
+        overLimitItem = proposal.proposedOrders.find(item => !get().validateQuantity(item.quantity));
+        if (overLimitItem) {
+          return {
+            ok: false,
+            code: 'quantity_limit',
+            itemCode: getItemCode(overLimitItem),
+            itemName: getItemName(overLimitItem),
+            requestedQuantity: overLimitItem.quantity,
+          };
+        }
+
+        const refreshedCodes = new Set(initiallyRequestedCodes);
+        const missingCodes = proposal.increasedItemCodes.filter(itemCode => !refreshedCodes.has(itemCode));
+        if (missingCodes.length > 0) {
+          const secondRefresh = await get().refreshStockForItems(
+            missingCodes,
+            stockExcludeInvoice,
+            requestedRevision,
+          );
+          if (!secondRefresh.ok) return secondRefresh;
+          proposal = buildProposal();
+        }
+
+        const stockByItem = get().stockByItem;
+        for (const itemCode of proposal.increasedItemCodes) {
+          const stock = stockByItem[itemCode];
+          const requestedQuantity = proposal.proposedQuantities[itemCode];
+          if (!stock) {
+            return { ok: false, code: 'stock_check_failed', itemCode, itemName: itemCode };
+          }
+          if (stock.is_stock_item && requestedQuantity > stock.available_qty + Number.EPSILON) {
+            const failedItem = items.find(item => getItemCode(item) === itemCode);
+            return {
+              ok: false,
+              code: 'insufficient_stock',
+              itemCode,
+              itemName: failedItem ? getItemName(failedItem) : itemCode,
+              requestedQuantity,
+              availableQuantity: stock.available_qty,
+              stockUom: stock.stock_uom,
+            };
+          }
+        }
       }
-    } catch (error) {
-      if (error instanceof CartError) {
-        set({ error: error.message });
-      } else {
-        set({ error: 'Failed to add item to cart' });
+
+      const stockByItem = get().stockByItem;
+      if (get().cartRevision !== requestedRevision) {
+        return { ok: false, code: 'stock_check_failed' };
       }
-    }
+      set({
+        activeOrders: proposal.proposedOrders.map(item => withStock(item, stockByItem[getItemCode(item)])),
+      });
+      return SUCCESS_RESULT;
+    });
+
+    cartMutationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  },
+
+  hydrateOrderItems: async (items, excludeInvoice) => {
+    const usedUniqueIds = new Set<string>();
+    const hydratedItems = items.map((item) => {
+      const baseUniqueId = item.uniqueId || generateUniqueId(item);
+      const uniqueId = usedUniqueIds.has(baseUniqueId) ? `${baseUniqueId}-${uuidv4()}` : baseUniqueId;
+      usedUniqueIds.add(uniqueId);
+      return { ...item, uniqueId };
+    });
+
+    set((state) => ({
+      activeOrders: hydratedItems,
+      cartRevision: state.cartRevision + 1,
+    }));
+    const revision = get().cartRevision;
+    return get().refreshStockForItems(
+      hydratedItems.map(getItemCode),
+      excludeInvoice,
+      revision,
+    );
   },
 
   removeFromOrder: async (uniqueId: string) => {
@@ -434,27 +753,28 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   },
 
   updateQuantity: async (uniqueId: string, quantity: number) => {
-    try {
-      if (!get().validateQuantity(quantity)) {
-        throw new CartError(`Quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`);
-      }
-
-      const newOrders = get().activeOrders.map(item =>
-        item.uniqueId === uniqueId ? { ...item, quantity } : item
-      );
-      set({ activeOrders: newOrders });
-    } catch (error) {
-      if (error instanceof CartError) {
-        set({ error: error.message });
-      } else {
-        set({ error: 'Failed to update quantity' });
-      }
+    const item = get().activeOrders.find(orderItem => orderItem.uniqueId === uniqueId);
+    if (!item || !get().validateQuantity(quantity)) {
+      return {
+        ok: false,
+        code: 'invalid_quantity',
+        itemCode: item ? getItemCode(item) : undefined,
+        itemName: item ? getItemName(item) : undefined,
+        requestedQuantity: quantity,
+      };
     }
+
+    if (quantity === 0) {
+      set({ activeOrders: get().activeOrders.filter(orderItem => orderItem.uniqueId !== uniqueId) });
+      return SUCCESS_RESULT;
+    }
+
+    return get().applyOrderItems([{ ...item, quantity }], [uniqueId]);
   },
 
   clearOrder: async () => {
     try {
-      set({ activeOrders: [] });
+      set((state) => ({ activeOrders: [], cartRevision: state.cartRevision + 1 }));
     } catch (error) {
       set({ error: 'Failed to clear cart' });
     }
@@ -464,7 +784,11 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSelectedCustomer: (customer) => set({ selectedCustomer: customer }),
   setSelectedTable: (table: string | null, room: string | null, doNotLoadOrder: boolean = false) => {
-    set({ selectedTable: table, selectedRoom: room });
+    set((state) => ({
+      selectedTable: table,
+      selectedRoom: room,
+      cartRevision: state.selectedTable === table ? state.cartRevision : state.cartRevision + 1,
+    }));
     if (table ) {
       if (!doNotLoadOrder) 
         get().loadTableOrder(table);
@@ -478,12 +802,14 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   setSelectedOrderType: (type) => {
     const { fetchMenuItems } = get();
     
-    set({ 
+    set((state) => ({
       activeOrders: [],
       selectedOrderType: type,
       isUpdatingOrder: false,
-      orderId: null
-    });
+      orderId: null,
+      stockExcludeInvoice: null,
+      cartRevision: state.cartRevision + 1,
+    }));
     
     if (type !== 'Aggregators') {
       fetchMenuItems();
@@ -594,9 +920,14 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   },
 
   getItemQuantityFromCart: (item: MenuItem): number => {
-    const uniqueId = generateUniqueId(item as OrderItem);
-    const cartItem = get().activeOrders.find(orderItem => orderItem.uniqueId === uniqueId);
-    return cartItem?.quantity || 0;
+    return get().getItemQuantityByCode(item.item);
+  },
+
+  getItemQuantityByCode: (itemCode: string): number => {
+    return get().activeOrders.reduce(
+      (quantity, item) => quantity + (getItemCode(item) === itemCode ? item.quantity : 0),
+      0,
+    );
   },
 
   loadTableOrder: async (table: string) => {
@@ -624,13 +955,12 @@ export const usePOSStore = create<POSStore>((set, get) => ({
           };
           return {
             ...orderItem,
-            uniqueId: generateUniqueId(orderItem as OrderItem)
+            uniqueId: item.name || generateUniqueId(orderItem as OrderItem)
           } as OrderItem;
         });
 
         set({ 
           tableOrder: response,
-          activeOrders: orderItems,
           selectedCustomer: order.customer ? {
             id: order.customer,
             name: order.customer_name,
@@ -638,65 +968,81 @@ export const usePOSStore = create<POSStore>((set, get) => ({
           } : null,
           isUpdatingOrder: true,
           orderId: order.name,
+          stockExcludeInvoice: order.docstatus === 0 ? order.name : null,
         });
+        await get().hydrateOrderItems(
+          orderItems,
+          order.docstatus === 0 ? order.name : null,
+        );
       } else {
-        set({ 
+        set((state) => ({
           tableOrder: null,
           activeOrders: [],
           selectedCustomer: getDefaultCustomer(get().posProfile),
           isUpdatingOrder: false,
           orderId: null,
-        });
+          stockExcludeInvoice: null,
+          cartRevision: state.cartRevision + 1,
+        }));
       }
     } catch (error) {
-      set({ 
+      set((state) => ({
         error: 'Failed to load table order',
         tableOrder: null,
         activeOrders: [],
         selectedCustomer: getDefaultCustomer(get().posProfile),
         isUpdatingOrder: false,
         orderId: null,
-      });
+        stockExcludeInvoice: null,
+        cartRevision: state.cartRevision + 1,
+      }));
     } finally {
       set({ orderLoading: false });
     }
   },
 
   clearTableOrder: () => {
-    set({ 
+    set((state) => ({
       tableOrder: null,
       activeOrders: [],
       selectedCustomer: getDefaultCustomer(get().posProfile),
       isUpdatingOrder: false,
       orderId: null,
-    });
+      stockExcludeInvoice: null,
+      cartRevision: state.cartRevision + 1,
+    }));
   },
 
-  setOrderForUpdate: (orderId: string | null) => {
-    set({ 
+  setOrderForUpdate: (orderId: string | null, stockExcludeInvoice: string | null = null) => {
+    set((state) => ({
       isUpdatingOrder: orderId !== null,
       orderId,
-    });
+      stockExcludeInvoice,
+      cartRevision: state.cartRevision + 1,
+    }));
   },
 
   resetOrderState: () => {
     const { fetchMenuItems } = get();
     
-    set({
+    set((state) => ({
       selectedCustomer: getDefaultCustomer(get().posProfile),
       selectedTable: null,
       selectedRoom: null,
       selectedAggregator: null,
       isUpdatingOrder: false,
       orderId: null,
+      stockExcludeInvoice: null,
       activeOrders: [],
       selectedItem: null,
       orderLoading: false,
       menuItems: [],
+      stockByItem: {},
       error: null,
       selectedOrderType: DEFAULT_ORDER_TYPE,
       orderComment: '',
-    });
+      cartRevision: state.cartRevision + 1,
+    }));
 
     fetchMenuItems();
   },

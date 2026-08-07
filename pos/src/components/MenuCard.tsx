@@ -1,6 +1,7 @@
 import { FC } from 'react';
 import { cn } from '@ury/ui';
 import { formatCurrency } from '@ury/core';
+import { t } from '../i18n';
 
 interface MenuCardProps {
   id: string;
@@ -11,6 +12,9 @@ interface MenuCardProps {
   item: string;
   onClick?: () => void;
   disabled?: boolean;
+  available_qty?: number;
+  is_stock_item?: boolean;
+  stock_uom?: string | null;
 }
 
 const MenuCard: FC<MenuCardProps> = ({ 
@@ -19,18 +23,28 @@ const MenuCard: FC<MenuCardProps> = ({
   item_image, 
   course, 
   onClick,
-  disabled 
+  disabled,
+  available_qty,
+  is_stock_item,
+  stock_uom,
 }) => {
+  const isOutOfStock = is_stock_item === true && (available_qty ?? 0) <= 0;
+  const isDisabled = disabled || isOutOfStock;
+  const stockLabel = is_stock_item === false
+    ? t('stock.not_tracked')
+    : t('stock.available', { qty: available_qty ?? 0, uom: stock_uom || '' });
+
   return (
     <div
       className={cn(
         "bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow cursor-pointer h-56 flex flex-col",
-        disabled && "opacity-50 cursor-not-allowed pointer-events-none"
+        isDisabled && "opacity-50 cursor-not-allowed pointer-events-none"
       )}
-      onClick={disabled ? undefined : onClick}
+      onClick={isDisabled ? undefined : onClick}
+      aria-disabled={isDisabled}
     >
       {/* Image section - fixed height */}
-      <div className="h-24">
+      <div className="h-24 relative">
         {item_image ? (
           <img
             src={item_image}
@@ -53,6 +67,16 @@ const MenuCard: FC<MenuCardProps> = ({
           <div className="w-full h-full bg-gray-200 flex items-center justify-center text-2xl text-gray-400 font-medium">
             {name.slice(0, 2).toUpperCase()}
           </div>
+        )}
+        {typeof is_stock_item === 'boolean' && (
+          <span className={cn(
+            "absolute top-2 end-2 max-w-[calc(100%-1rem)] truncate rounded-full px-2 py-1 text-[11px] font-semibold shadow-sm",
+            isOutOfStock
+              ? "bg-red-100 text-red-700"
+              : "bg-white/90 text-gray-700"
+          )} title={stockLabel}>
+            {stockLabel}
+          </span>
         )}
       </div>
 
@@ -83,4 +107,4 @@ const MenuCard: FC<MenuCardProps> = ({
   );
 };
 
-export default MenuCard; 
+export default MenuCard;

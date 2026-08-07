@@ -9,6 +9,7 @@ import { usePOSStore } from '../store/pos-store';
 import { cn } from '@ury/ui';
 import { Spinner } from '@ury/ui';
 import InitialLoader from '../components/InitialLoader';
+import { showCartMutationError } from '../lib/cart-feedback';
 
 export default function POS() {
   const {
@@ -35,10 +36,11 @@ export default function POS() {
       clearTimeout(clickTimerRef.current);
     }
 
-    clickTimerRef.current = setTimeout(() => {
+    clickTimerRef.current = setTimeout(async () => {
       if (clickCountRef.current === 1) {
         // Single click - add to cart
-        addToOrder({ ...item, quantity: 1 });
+        const result = await addToOrder({ ...item, quantity: 1 });
+        showCartMutationError(result);
       } else if (clickCountRef.current === 2) {
         // Double click - open dialog
         setSelectedItem(item);

@@ -34,6 +34,11 @@
   "menu": {
     "special_items": "Special Items"
   },
+  "stock": {
+    "available": "Stock: {{qty}} {{uom}}",
+    "not_tracked": "Not stock-controlled",
+    "selected_items": "selected items"
+  },
   "pos_sidebar": {
     "categories": "Categories",
     "all_items": "All Items"
@@ -52,7 +57,10 @@
     "loading_order": "Loading order details...",
     "edit_item": "Edit item",
     "add_comment": "Add comment",
-    "edit_comment": "Edit comment"
+    "edit_comment": "Edit comment",
+    "addon": "Add-on",
+    "stock_total": "Stock: {{qty}} {{uom}}",
+    "stock_remaining": "Remaining: {{qty}} {{uom}}"
   },
   "order": {
     "select_to_view": "Select an order to view details",
@@ -136,7 +144,12 @@
     "discount_exceeds_max": "Percentage discount cannot exceed 100%",
     "please_print_first": "Please print invoice before making payment",
     "enter_cancel_reason": "Please enter a reason for cancellation.",
-    "dine_in_restricted": "Dine In is not available for your role"
+    "dine_in_restricted": "Dine In is not available for your role",
+    "invalid_item_quantity": "Enter a valid quantity for {{item}}.",
+    "item_quantity_limit": "{{item}} cannot exceed {{limit}} units per line.",
+    "item_out_of_stock": "{{item}} is out of stock and was not added.",
+    "insufficient_item_stock": "Only {{available}} {{uom}} of {{item}} is available; {{requested}} was requested in total.",
+    "stock_check_failed": "Current stock for {{item}} could not be verified. The cart was not changed; please try again."
   },
   "success": {
     "order_cancelled": "Order cancelled successfully",
@@ -293,7 +306,8 @@
     "no_addons": "No add ons",
     "total": "Total",
     "update_order": "Update Order",
-    "add_to_order": "Add to Order"
+    "add_to_order": "Add to Order",
+    "checking_stock": "Checking stock..."
   },
   "order_types": {
     "dine_in": "Dine In",

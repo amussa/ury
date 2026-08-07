@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Trash2, Edit, FrownIcon, Plus, Loader2, MessageSquare } from 'lucide-react';
 import { usePOSStore } from '../store/pos-store';
 import { cn } from '@ury/ui';
@@ -15,12 +15,14 @@ import type { RootState } from '../store/root-store';
 import { showToast } from '@ury/ui';
 import { DINE_IN } from '../data/order-types';
 import { t } from '../i18n';
+import { showCartMutationError } from '../lib/cart-feedback';
 
 const OrderPanel = () => {
   const { 
     activeOrders, 
+    addToOrder,
+    applyOrderItems,
     removeFromOrder, 
-    updateQuantity, 
     clearOrder, 
     setSelectedItem,
     orderLoading,
@@ -36,12 +38,16 @@ const OrderPanel = () => {
     paymentModes,
     orderId,
     orderComment,
-    setOrderComment
+    setOrderComment,
+    stockByItem,
+    getItemQuantityByCode,
   } = usePOSStore();
   const user = useRootStore((state: RootState) => state.user);
   const [editingItem, setEditingItem] = useState<typeof activeOrders[0] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCommentDialog, setShowCommentDialog] = useState(false);
+  const quantityMutationKeys = useRef(new Set<string>());
+  const [adjustingItemKeys, setAdjustingItemKeys] = useState(new Set<string>());
 
   const calculateItemTotal = (item: typeof activeOrders[0]) => {
     const basePrice = item.selectedVariant?.price || item.price;
@@ -62,6 +68,73 @@ const OrderPanel = () => {
     };
     setSelectedItem(menuItem);
     setEditingItem(item);
+  };
+
+  const getConfigurationItems = (item: typeof activeOrders[0]) =>
+    item.configurationId && item.configurationRole === 'main'
+      ? activeOrders.filter(orderItem => orderItem.configurationId === item.configurationId)
+      : [item];
+
+  const runItemMutation = async (
+    item: typeof activeOrders[0],
+    operation: () => Promise<void>,
+  ) => {
+    const mutationKey = item.configurationId || item.uniqueId!;
+    if (quantityMutationKeys.current.has(mutationKey)) return;
+
+    quantityMutationKeys.current.add(mutationKey);
+    setAdjustingItemKeys(new Set(quantityMutationKeys.current));
+    try {
+      await operation();
+    } finally {
+      quantityMutationKeys.current.delete(mutationKey);
+      setAdjustingItemKeys(new Set(quantityMutationKeys.current));
+    }
+  };
+
+  const handleDecreaseQuantity = async (item: typeof activeOrders[0]) => {
+    await runItemMutation(item, async () => {
+      const configurationItems = getConfigurationItems(item);
+      const nextQuantity = Math.max(0, Math.round((item.quantity - 1) * 1000) / 1000);
+      if (nextQuantity <= 0) {
+        await Promise.all(
+          configurationItems.map(orderItem => removeFromOrder(orderItem.uniqueId!)),
+        );
+        return;
+      }
+
+      const replaceUniqueIds = configurationItems
+        .map(orderItem => orderItem.uniqueId)
+        .filter((uniqueId): uniqueId is string => Boolean(uniqueId));
+      const result = await applyOrderItems(
+        configurationItems.map(orderItem => ({ ...orderItem, quantity: nextQuantity })),
+        replaceUniqueIds,
+      );
+      showCartMutationError(result);
+    });
+  };
+
+  const handleIncreaseQuantity = async (item: typeof activeOrders[0]) => {
+    await runItemMutation(item, async () => {
+      const configurationItems = getConfigurationItems(item);
+      const result = configurationItems.length > 1
+        ? await applyOrderItems(
+            configurationItems.map(orderItem => ({ ...orderItem, quantity: orderItem.quantity + 1 })),
+            configurationItems
+              .map(orderItem => orderItem.uniqueId)
+              .filter((uniqueId): uniqueId is string => Boolean(uniqueId)),
+          )
+        : await addToOrder({ ...item, quantity: 1 });
+      showCartMutationError(result);
+    });
+  };
+
+  const handleRemoveItem = async (item: typeof activeOrders[0]) => {
+    await runItemMutation(item, async () => {
+      await Promise.all(
+        getConfigurationItems(item).map(orderItem => removeFromOrder(orderItem.uniqueId!)),
+      );
+    });
   };
 
   const handleCommentSave = (comment: string) => {
@@ -194,7 +267,30 @@ const OrderPanel = () => {
       ) : (
         <>
           <div className="flex-1 overflow-y-auto px-6">
-            {activeOrders.map((item) => (
+            {activeOrders.map((item) => {
+              const stock = stockByItem[item.item];
+              const isStockItem = stock?.is_stock_item ?? item.is_stock_item;
+              const availableQuantity = stock?.available_qty ?? item.available_qty;
+              const stockUom = stock?.stock_uom ?? item.stock_uom ?? '';
+              const quantityInCart = getItemQuantityByCode(item.item);
+              const remainingQuantity = typeof availableQuantity === 'number'
+                ? Math.max(0, availableQuantity - quantityInCart)
+                : null;
+              const configurationItems = getConfigurationItems(item);
+              const incrementCounts = configurationItems.reduce<Record<string, number>>((counts, orderItem) => {
+                counts[orderItem.item] = (counts[orderItem.item] || 0) + 1;
+                return counts;
+              }, {});
+              const incrementExceedsStock = Object.entries(incrementCounts).some(([itemCode, increment]) => {
+                const itemStock = stockByItem[itemCode];
+                return itemStock?.is_stock_item === true
+                  && getItemQuantityByCode(itemCode) + increment > itemStock.available_qty + Number.EPSILON;
+              });
+              const isConfigurationAddon = item.configurationRole === 'addon';
+              const isAdjusting = adjustingItemKeys.has(item.configurationId || item.uniqueId!);
+              const displayedAddons = item.configuredAddons || item.selectedAddons || [];
+
+              return (
               <div
                 key={item.uniqueId}
                 className={cn(
@@ -210,67 +306,81 @@ const OrderPanel = () => {
                     {item.selectedVariant && (
                       <p className="text-sm text-gray-600">{item.selectedVariant.name}</p>
                     )}
-                    {item.selectedAddons && item.selectedAddons.length > 0 && (
+                    {item.configurationRole === 'addon' && (
+                      <p className="text-xs font-medium text-blue-600">
+                        {t('cart.addon')} · × {item.quantity}
+                      </p>
+                    )}
+                    {displayedAddons.length > 0 && (
                       <p className="text-sm text-gray-500">
-                        {item.selectedAddons.map(addon => addon.name).join(', ')}
+                        {displayedAddons.map(addon => addon.name).join(', ')}
                       </p>
                     )}
                     <p className="text-gray-600 text-sm">{formatCurrency(calculateItemTotal(item))}</p>
+                    {isStockItem === true && typeof availableQuantity === 'number' ? (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {t('cart.stock_total', { qty: availableQuantity, uom: stockUom })}
+                        {' · '}
+                        {t('cart.stock_remaining', { qty: remainingQuantity ?? 0, uom: stockUom })}
+                      </p>
+                    ) : isStockItem === false ? (
+                      <p className="mt-1 text-xs text-gray-500">{t('stock.not_tracked')}</p>
+                    ) : null}
                   </div>
                   
                   <div className="flex items-center gap-2">
-                    <Button
-                      onClick={() => handleEdit(item)}
-                      variant="ghost"
-                      size="icon"
-                      className="text-blue-600 hover:text-blue-700"
-                      title={t('cart.edit_item')}
-                      disabled={isInteractionDisabled}
-                    >
-                      <Edit className="w-4 h-4" />
-                    </Button>
-                    <div className="flex items-center gap-2">
+                    {!isConfigurationAddon && (
                       <Button
-                        onClick={() => {
-                          const newQuantity = Math.max(0, Math.round((item.quantity - 1) * 1000) / 1000);
-                          if (newQuantity <= 0) {
-                            removeFromOrder(item.uniqueId!);
-                          } else {
-                            updateQuantity(item.uniqueId!, newQuantity);
-                          }
-                        }}
+                        onClick={() => handleEdit(item)}
+                        variant="ghost"
+                        size="icon"
+                        className="text-blue-600 hover:text-blue-700"
+                        title={t('cart.edit_item')}
+                        disabled={isInteractionDisabled || isAdjusting}
+                      >
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                    )}
+                    {!isConfigurationAddon && (
+                      <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => handleDecreaseQuantity(item)}
                         variant="outline"
                         size="icon"
                         className="w-8 h-8 rounded-full"
-                        disabled={isInteractionDisabled}
+                        disabled={isInteractionDisabled || isAdjusting}
                       >
                         -
                       </Button>
                       <span className="w-6 text-center">{item.quantity}</span>
                       <Button
-                        onClick={() => updateQuantity(item.uniqueId!, Math.round((item.quantity + 1) * 1000) / 1000)}
+                        onClick={() => handleIncreaseQuantity(item)}
                         variant="outline"
                         size="icon"
                         className="w-8 h-8 rounded-full"
-                        disabled={isInteractionDisabled}
+                        disabled={isInteractionDisabled || isAdjusting || item.quantity >= 99 || incrementExceedsStock}
                       >
                         +
                       </Button>
-                    </div>
+                      </div>
+                    )}
                     
-                    <Button
-                      onClick={() => removeFromOrder(item.uniqueId!)}
-                      variant="ghost"
-                      size="icon"
-                      className="text-red-500 hover:text-red-600"
-                      disabled={isInteractionDisabled}
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </Button>
+                    {!isConfigurationAddon && (
+                      <Button
+                        onClick={() => handleRemoveItem(item)}
+                        variant="ghost"
+                        size="icon"
+                        className="text-red-500 hover:text-red-600"
+                        disabled={isInteractionDisabled || isAdjusting}
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {activeOrders.length > 0 && (
               <Button
                 onClick={clearOrder}
@@ -335,7 +445,7 @@ const OrderPanel = () => {
           }}
           editMode
           initialVariant={editingItem.selectedVariant}
-          initialAddons={editingItem.selectedAddons}
+          initialAddons={editingItem.configuredAddons || editingItem.selectedAddons}
           initialQuantity={editingItem.quantity}
           itemToReplace={editingItem}
         />
@@ -351,4 +461,4 @@ const OrderPanel = () => {
   );
 };
 
-export default OrderPanel; 
+export default OrderPanel;

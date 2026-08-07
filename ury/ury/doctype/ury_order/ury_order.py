@@ -2,19 +2,179 @@
 # For license information, please see license.txt
 
 import json
+
 import frappe
+from erpnext.accounts.doctype.pos_invoice.pos_invoice import (
+    get_product_bundle_stock_availability,
+    get_stock_availability,
+)
+from erpnext.controllers.queries import item_query
 from frappe import _
 from frappe.model.document import Document
-from erpnext.controllers.queries import item_query
-from ury.ury_pos.api import getBranch, getBranchRoom
-from ury.ury.api.ury_kot_generate import kot_execute
-from ury.ury.api.ury_kot_generate import process_items_for_cancel_kot
+from frappe.utils import flt
 
-from frappe import cache
+from ury.ury.api.ury_kot_generate import kot_execute, process_items_for_cancel_kot
+from ury.ury_pos.api import (
+    get_draft_reserved_qty_map,
+    get_pos_profile_for_current_branch,
+    get_submitted_reserved_qty_map,
+    getBranch,
+    getBranchRoom,
+)
 
 
 class URYOrder(Document):
     pass
+
+
+def _aggregate_order_stock_qty(items):
+    """Aggregate the final order payload in stock UOM, preserving fractional qty."""
+    quantities = {}
+    for item in items:
+        item_code = item.get("item_code")
+        if not item_code:
+            continue
+
+        conversion_factor = flt(item.get("conversion_factor")) or 1
+        stock_qty = flt(item.get("qty")) * conversion_factor
+        quantities[item_code] = flt(quantities.get(item_code)) + stock_qty
+
+    return quantities
+
+
+def _get_stock_lock_item_codes(item_codes):
+    """Include Product Bundle components so different bundles share the same lock."""
+    lock_items = set(item_codes)
+    if item_codes:
+        lock_items.update(
+            frappe.get_all(
+                "Product Bundle Item",
+                filters={"parent": ["in", list(item_codes)]},
+                pluck="item_code",
+            )
+        )
+    return sorted(lock_items)
+
+
+def _lock_stock_bins(warehouse, item_codes):
+    """Serialize stock promises for the same physical items until request commit."""
+    if not item_codes:
+        return {}
+
+    rows = frappe.db.sql(
+        """
+        SELECT item_code, actual_qty
+        FROM `tabBin`
+        WHERE warehouse = %(warehouse)s
+          AND item_code IN %(item_codes)s
+        ORDER BY item_code
+        FOR UPDATE
+        """,
+        {"warehouse": warehouse, "item_codes": tuple(sorted(item_codes))},
+        as_dict=True,
+    )
+    return {row.item_code: flt(row.actual_qty) for row in rows}
+
+
+def _get_active_product_bundle_codes(item_codes):
+    if not item_codes:
+        return set()
+    return set(
+        frappe.get_all(
+            "Product Bundle",
+            filters={"name": ["in", list(item_codes)], "disabled": 0},
+            pluck="name",
+        )
+    )
+
+
+def _validate_order_stock(
+    ordered_qty,
+    warehouse,
+    exclude_invoice=None,
+    locked_bin_qty=None,
+):
+    """Validate the complete final order against submitted and draft reservations."""
+    bundle_codes = _get_active_product_bundle_codes(ordered_qty)
+    required_by_stock_item = {}
+    available_by_stock_item = {}
+
+    for item_code in sorted(ordered_qty):
+        required_qty = flt(ordered_qty[item_code])
+        if item_code in bundle_codes:
+            availability, _, _ = get_product_bundle_stock_availability(
+                item_code, warehouse, required_qty
+            )
+            for component in availability:
+                component_code = component["item_code"]
+                required_by_stock_item[component_code] = flt(
+                    required_by_stock_item.get(component_code)
+                ) + flt(component["required"])
+                component_available = flt(component["available"])
+                previous_available = available_by_stock_item.get(component_code)
+                available_by_stock_item[component_code] = (
+                    component_available
+                    if previous_available is None
+                    else min(previous_available, component_available)
+                )
+            continue
+
+        availability, is_stock_item, _ = get_stock_availability(item_code, warehouse)
+        if not is_stock_item:
+            continue
+
+        required_by_stock_item[item_code] = flt(
+            required_by_stock_item.get(item_code)
+        ) + required_qty
+        scalar_availability = flt(availability)
+        previous_available = available_by_stock_item.get(item_code)
+        available_by_stock_item[item_code] = (
+            scalar_availability
+            if previous_available is None
+            else min(previous_available, scalar_availability)
+        )
+
+    stock_item_codes = required_by_stock_item.keys()
+    draft_reserved = get_draft_reserved_qty_map(
+        stock_item_codes,
+        warehouse,
+        exclude_invoice=exclude_invoice,
+        for_update=True,
+    )
+    if locked_bin_qty is not None:
+        submitted_reserved = get_submitted_reserved_qty_map(
+            stock_item_codes,
+            warehouse,
+            for_update=True,
+        )
+        available_by_stock_item = {
+            item_code: flt(locked_bin_qty.get(item_code))
+            - flt(submitted_reserved.get(item_code))
+            for item_code in stock_item_codes
+        }
+    shortages = []
+    for item_code in sorted(required_by_stock_item):
+        required_qty = flt(required_by_stock_item[item_code])
+        available_qty = flt(available_by_stock_item[item_code]) - flt(
+            draft_reserved.get(item_code)
+        )
+        if available_qty < required_qty:
+            shortages.append(
+                _("Item {0}: Required {1}, Available {2}").format(
+                    frappe.bold(item_code),
+                    frappe.bold(required_qty),
+                    frappe.bold(available_qty),
+                )
+            )
+
+    if shortages:
+        frappe.throw(
+            _("Insufficient stock in warehouse {0}:<br>{1}").format(
+                frappe.bold(warehouse),
+                "<br>".join(shortages),
+            ),
+            title=_("Insufficient Stock"),
+        )
 
 
 def set_pos_profile(invoice, pos_profile):
@@ -795,7 +955,7 @@ def sync_order(
 ):
     
     user_role = frappe.get_roles()
-    posprofile = frappe.get_doc("POS Profile", pos_profile)
+    posprofile, user_branch = get_pos_profile_for_current_branch(pos_profile)
     
     billing_user = any(
         role.role in user_role for role in posprofile.role_allowed_for_billing
@@ -815,6 +975,13 @@ def sync_order(
         return {"status": "Failure"}
 
     invoice = get_order_invoice(table, invoice,order_type)
+    if invoice.branch and invoice.branch != user_branch:
+        frappe.throw(
+            _("This order does not belong to your branch."),
+            frappe.PermissionError,
+        )
+    if not invoice.branch:
+        invoice.branch = user_branch
 
     if last_invoice and last_modified_time:
         lastModifiedTime = invoice.modified
@@ -948,6 +1115,21 @@ def sync_order(
                         ),
                 ),
             )
+
+    # Populate warehouse/UOM conversion before validating the final payload.
+    # The current invoice is excluded from draft reservations when it is edited,
+    # because ordered_qty already represents its complete replacement state.
+    invoice.set_missing_values(for_validate=True)
+    ordered_qty = _aggregate_order_stock_qty(invoice.items)
+    stock_lock_items = _get_stock_lock_item_codes(ordered_qty)
+    locked_bin_qty = _lock_stock_bins(posprofile.warehouse, stock_lock_items)
+    exclude_invoice = None if invoice.is_new() else invoice.name
+    _validate_order_stock(
+        ordered_qty,
+        posprofile.warehouse,
+        exclude_invoice=exclude_invoice,
+        locked_bin_qty=locked_bin_qty,
+    )
 
     try:
         invoice.save()

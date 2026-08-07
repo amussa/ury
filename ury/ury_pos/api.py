@@ -1,8 +1,360 @@
-import frappe
-from frappe import _
+import json
 from datetime import date, datetime, timedelta
-from frappe.utils import validate_phone_number
+
+import frappe
+from erpnext.accounts.doctype.pos_invoice.pos_invoice import (
+    get_product_bundle_stock_availability,
+)
+from frappe import _
+from frappe.utils import cint, flt, validate_phone_number
+
 from ury.ury_pos.cashier import get_single_cashier_opening
+
+
+def get_pos_profile_for_current_branch(pos_profile=None):
+    """Return a POS Profile only when it belongs to the current user's branch."""
+    branch = getBranch()
+    if not pos_profile:
+        pos_profile = frappe.db.get_value("POS Profile", {"branch": branch}, "name")
+
+    if not pos_profile:
+        frappe.throw(_("No POS Profile found for branch {0}.").format(frappe.bold(branch)))
+
+    profile = frappe.get_doc("POS Profile", pos_profile)
+    if profile.branch != branch:
+        frappe.throw(
+            _("POS Profile {0} does not belong to your branch.").format(
+                frappe.bold(profile.name)
+            ),
+            frappe.PermissionError,
+        )
+
+    if not profile.warehouse:
+        frappe.throw(
+            _("Please set a warehouse in POS Profile {0}.").format(
+                frappe.bold(profile.name)
+            )
+        )
+
+    return profile, branch
+
+
+def _normalise_item_codes(item_code=None, item_codes=None):
+    if isinstance(item_codes, str):
+        try:
+            item_codes = json.loads(item_codes)
+        except (TypeError, ValueError):
+            frappe.throw(_("item_codes must be a JSON array."))
+
+    if item_codes is None:
+        item_codes = []
+    elif not isinstance(item_codes, (list, tuple)):
+        frappe.throw(_("item_codes must be a list."))
+
+    requested = []
+    if item_code:
+        requested.append(item_code)
+    requested.extend(item_codes)
+
+    return list(dict.fromkeys(str(code).strip() for code in requested if str(code).strip()))
+
+
+def _get_item_metadata(item_codes):
+    if not item_codes:
+        return {}
+
+    rows = frappe.get_all(
+        "Item",
+        filters={"name": ["in", item_codes]},
+        fields=[
+            "name",
+            "image",
+            "disabled",
+            "is_stock_item",
+            "stock_uom",
+            "allow_negative_stock",
+        ],
+    )
+    metadata = {row.name: row for row in rows}
+    missing = [item for item in item_codes if item not in metadata]
+    if missing:
+        frappe.throw(
+            _("Item {0} was not found.").format(", ".join(frappe.bold(item) for item in missing))
+        )
+
+    return metadata
+
+
+def _get_active_product_bundle_codes(item_codes, item_metadata):
+    candidates = [
+        item_code
+        for item_code in item_codes
+        if not cint(item_metadata[item_code].is_stock_item)
+    ]
+    if not candidates:
+        return set()
+
+    return set(
+        frappe.get_all(
+            "Product Bundle",
+            filters={"name": ["in", candidates], "disabled": 0},
+            pluck="name",
+        )
+    )
+
+
+def _get_bin_qty_map(item_codes, warehouse):
+    if not item_codes:
+        return {}
+
+    return {
+        row.item_code: flt(row.actual_qty)
+        for row in frappe.get_all(
+            "Bin",
+            filters={"warehouse": warehouse, "item_code": ["in", item_codes]},
+            fields=["item_code", "actual_qty"],
+        )
+    }
+
+
+def _get_reserved_qty_from_child_table(
+    child_table,
+    qty_field,
+    item_codes,
+    warehouse,
+    docstatus,
+    exclude_invoice=None,
+    exclude_returns=False,
+    for_update=False,
+):
+    if not item_codes:
+        return {}
+
+    conditions = [
+        "invoice.name = item.parent",
+        "invoice.docstatus = %(docstatus)s",
+        "item.docstatus = %(docstatus)s",
+        "item.item_code IN %(item_codes)s",
+        "item.warehouse = %(warehouse)s",
+    ]
+    values = {
+        "docstatus": docstatus,
+        "item_codes": tuple(item_codes),
+        "warehouse": warehouse,
+    }
+
+    if docstatus == 1:
+        # Match ERPNext get_pos_reserved_qty: submitted but not consolidated.
+        conditions.append("COALESCE(invoice.consolidated_invoice, '') = ''")
+    if exclude_returns:
+        conditions.append("COALESCE(invoice.is_return, 0) = 0")
+    if exclude_invoice:
+        conditions.append("invoice.name != %(exclude_invoice)s")
+        values["exclude_invoice"] = exclude_invoice
+
+    select_qty = (
+        f"item.`{qty_field}` AS reserved_qty"
+        if for_update
+        else f"COALESCE(SUM(item.`{qty_field}`), 0) AS reserved_qty"
+    )
+    group_or_lock = (
+        "ORDER BY invoice.name, item.name FOR UPDATE"
+        if for_update
+        else "GROUP BY item.item_code"
+    )
+    rows = frappe.db.sql(
+        f"""
+        SELECT item.item_code, {select_qty}
+        FROM `tabPOS Invoice` invoice
+        INNER JOIN `tab{child_table}` item ON invoice.name = item.parent
+        WHERE {" AND ".join(conditions)}
+        {group_or_lock}
+        """,
+        values,
+        as_dict=True,
+    )
+    reserved = {}
+    for row in rows:
+        reserved[row.item_code] = flt(reserved.get(row.item_code)) + flt(
+            row.reserved_qty
+        )
+    return reserved
+
+
+def _merge_qty_maps(*qty_maps):
+    merged = {}
+    for qty_map in qty_maps:
+        for item_code, qty in qty_map.items():
+            merged[item_code] = flt(merged.get(item_code)) + flt(qty)
+    return merged
+
+
+def get_submitted_reserved_qty_map(item_codes, warehouse, for_update=False):
+    """Bulk equivalent of ERPNext get_pos_reserved_qty for several items."""
+    return _merge_qty_maps(
+        _get_reserved_qty_from_child_table(
+            "POS Invoice Item",
+            "stock_qty",
+            item_codes,
+            warehouse,
+            1,
+            for_update=for_update,
+        ),
+        _get_reserved_qty_from_child_table(
+            "Packed Item",
+            "qty",
+            item_codes,
+            warehouse,
+            1,
+            for_update=for_update,
+        ),
+    )
+
+
+def get_draft_reserved_qty_map(
+    item_codes,
+    warehouse,
+    exclude_invoice=None,
+    for_update=False,
+):
+    """Reserve stock already promised by active URY draft POS Invoices."""
+    return _merge_qty_maps(
+        _get_reserved_qty_from_child_table(
+            "POS Invoice Item",
+            "stock_qty",
+            item_codes,
+            warehouse,
+            0,
+            exclude_invoice=exclude_invoice,
+            exclude_returns=True,
+            for_update=for_update,
+        ),
+        _get_reserved_qty_from_child_table(
+            "Packed Item",
+            "qty",
+            item_codes,
+            warehouse,
+            0,
+            exclude_invoice=exclude_invoice,
+            exclude_returns=True,
+            for_update=for_update,
+        ),
+    )
+
+
+def _get_stock_details(item_codes, warehouse, exclude_invoice=None, item_metadata=None):
+    """Return fresh stock for items, including submitted and active draft reservations."""
+    if not item_codes:
+        return {}
+
+    item_metadata = item_metadata or _get_item_metadata(item_codes)
+    bundle_codes = _get_active_product_bundle_codes(item_codes, item_metadata)
+    direct_stock_codes = {
+        item_code
+        for item_code in item_codes
+        if cint(item_metadata[item_code].is_stock_item)
+    }
+
+    bundle_components = {}
+    physical_item_codes = set(direct_stock_codes)
+    for bundle_code in bundle_codes:
+        availability, _, _ = get_product_bundle_stock_availability(
+            bundle_code, warehouse, 1
+        )
+        required_by_component = {}
+        available_by_component = {}
+        for component in availability:
+            component_code = component["item_code"]
+            required_by_component[component_code] = flt(
+                required_by_component.get(component_code)
+            ) + flt(component["required"])
+            current_available = available_by_component.get(component_code)
+            component_available = flt(component["available"])
+            available_by_component[component_code] = (
+                component_available
+                if current_available is None
+                else min(current_available, component_available)
+            )
+            physical_item_codes.add(component_code)
+        bundle_components[bundle_code] = (required_by_component, available_by_component)
+
+    reservation_codes = physical_item_codes | bundle_codes
+    bin_qty = _get_bin_qty_map(direct_stock_codes, warehouse)
+    submitted_reserved = get_submitted_reserved_qty_map(direct_stock_codes, warehouse)
+    draft_reserved = get_draft_reserved_qty_map(
+        reservation_codes, warehouse, exclude_invoice=exclude_invoice
+    )
+    global_negative_stock = cint(
+        frappe.db.get_single_value("Stock Settings", "allow_negative_stock", cache=True)
+    )
+
+    details = {}
+    for item_code in item_codes:
+        item = item_metadata[item_code]
+        negative_stock_allowed = bool(
+            global_negative_stock or cint(item.allow_negative_stock)
+        )
+
+        if item_code in direct_stock_codes:
+            available_qty = (
+                flt(bin_qty.get(item_code))
+                - flt(submitted_reserved.get(item_code))
+                - flt(draft_reserved.get(item_code))
+            )
+            is_stock_item = True
+        elif item_code in bundle_codes:
+            required_by_component, available_by_component = bundle_components[item_code]
+            possible_bundle_qty = []
+            for component_code, required_qty in required_by_component.items():
+                if required_qty > 0:
+                    possible_bundle_qty.append(
+                        (
+                            flt(available_by_component[component_code])
+                            - flt(draft_reserved.get(component_code))
+                        )
+                        / required_qty
+                    )
+
+            # Product Bundles containing only non-stock items are effectively unlimited,
+            # matching ERPNext's get_bundle_availability sentinel.
+            available_qty = (
+                min(possible_bundle_qty)
+                if possible_bundle_qty
+                else 1000000 - flt(draft_reserved.get(item_code))
+            )
+            is_stock_item = True
+        else:
+            available_qty = 0
+            is_stock_item = False
+
+        details[item_code] = {
+            "item_code": item_code,
+            "available_qty": flt(available_qty),
+            "is_stock_item": bool(is_stock_item),
+            "stock_uom": item.stock_uom,
+            "negative_stock_allowed": negative_stock_allowed,
+        }
+
+    return details
+
+
+def _validate_excluded_invoice(exclude_invoice, profile):
+    if not exclude_invoice:
+        return
+
+    invoice = frappe.db.get_value(
+        "POS Invoice",
+        exclude_invoice,
+        ["name", "docstatus", "branch", "pos_profile"],
+        as_dict=True,
+    )
+    if (
+        not invoice
+        or invoice.docstatus != 0
+        or invoice.branch != profile.branch
+        or invoice.pos_profile != profile.name
+    ):
+        frappe.throw(_("The order to exclude is not an active order for this POS Profile."), frappe.PermissionError)
 
 
 #GetTable  decripted temporarily
@@ -23,12 +375,11 @@ def getRestaurantMenu(pos_profile, room=None, order_type=None):
 
     user_role = frappe.get_roles()
 
-    pos_profile = frappe.get_doc("POS Profile", pos_profile)
+    pos_profile, branch_name = get_pos_profile_for_current_branch(pos_profile)
 
     cashier = any(
         role.role in user_role for role in pos_profile.role_allowed_for_billing
     )
-    branch_name = getBranch()
     restaurant = frappe.db.get_value("URY Restaurant", {"branch": branch_name}, "name")
     
     if room:
@@ -80,20 +431,27 @@ def getRestaurantMenu(pos_profile, room=None, order_type=None):
         fields=["item", "item_name", "rate", "special_dish", "disabled", "course"],
         order_by="item_name asc"
     )
-    
-    menu_items_with_image = [
-        {
+
+    item_codes = list(dict.fromkeys(item.item for item in menu_items))
+    item_metadata = _get_item_metadata(item_codes)
+    stock_details = _get_stock_details(
+        item_codes,
+        pos_profile.warehouse,
+        item_metadata=item_metadata,
+    )
+    for item in menu_items:
+        menu_item = {
             "item": item.item,
             "item_name": _(item.item_name) if item.item_name else item.item_name,
             "rate": item.rate,
             "special_dish": item.special_dish,
             "disabled": item.disabled,
-            "item_image": frappe.db.get_value("Item", item.item, "image"),
+            "item_image": item_metadata[item.item].image,
             "course": item.course,
             "course_label": _(item.course) if item.course else item.course,
         }
-        for item in menu_items
-    ]
+        menu_item.update(stock_details[item.item])
+        menu_items_with_image.append(menu_item)
     modified = frappe.db.get_value("URY Menu", menu, "modified")
     
     
@@ -101,6 +459,30 @@ def getRestaurantMenu(pos_profile, room=None, order_type=None):
         "items": menu_items_with_image,
         "modified_time": modified,
         "name": menu
+    }
+
+
+@frappe.whitelist()
+def getStockAvailability(
+    pos_profile,
+    item_code=None,
+    item_codes=None,
+    exclude_invoice=None,
+):
+    """Return fresh stock for one item or a JSON/list batch in a stable map shape."""
+    profile, _ = get_pos_profile_for_current_branch(pos_profile)
+    _validate_excluded_invoice(exclude_invoice, profile)
+
+    requested = _normalise_item_codes(item_code=item_code, item_codes=item_codes)
+    if not requested:
+        frappe.throw(_("Please provide item_code or item_codes."))
+
+    return {
+        "stocks": _get_stock_details(
+            requested,
+            profile.warehouse,
+            exclude_invoice=exclude_invoice,
+        )
     }
 
 @frappe.whitelist()
@@ -827,8 +1209,8 @@ def getAggregator():
 
 
 @frappe.whitelist()
-def getAggregatorItem(aggregator):
-    branchName = getBranch()
+def getAggregatorItem(aggregator, pos_profile=None):
+    pos_profile, branchName = get_pos_profile_for_current_branch(pos_profile)
     aggregatorItem = []
     aggregatorItemList = []
     priceList = frappe.db.get_value(
@@ -841,16 +1223,27 @@ def getAggregatorItem(aggregator):
         fields=["item_code", "item_name", "price_list_rate"],
         filters={"selling": 1, "price_list": priceList},
     )
-    aggregatorItemList = [
-        {
+    item_codes = list(dict.fromkeys(item.item_code for item in aggregatorItem))
+    item_metadata = _get_item_metadata(item_codes)
+    stock_details = _get_stock_details(
+        item_codes,
+        pos_profile.warehouse,
+        item_metadata=item_metadata,
+    )
+    for item in aggregatorItem:
+        metadata = item_metadata[item.item_code]
+        if cint(metadata.disabled):
+            continue
+
+        aggregator_item = {
             "item": item.item_code,
             "item_name": item.item_name,
             "rate": item.price_list_rate,
-            "item_image": frappe.db.get_value("Item", item.item, "image"),
+            "item_image": metadata.image,
         }
-        for item in aggregatorItem
-        if not frappe.db.get_value("Item", item.item_code, "disabled")
-    ]
+        aggregator_item.update(stock_details[item.item_code])
+        aggregatorItemList.append(aggregator_item)
+
     return aggregatorItemList
 
 @frappe.whitelist()

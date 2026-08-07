@@ -78,7 +78,10 @@ const MenuList: React.FC<MenuListProps> = ({ onItemClick }) => {
                 course={item.course_label || item.course}
                 item={item.item}
                 onClick={() => onItemClick(item)}
-                disabled={isInteractionDisabled}
+                available_qty={item.available_qty}
+                is_stock_item={item.is_stock_item}
+                stock_uom={item.stock_uom}
+                disabled={isInteractionDisabled || (item.is_stock_item === true && (item.available_qty ?? 0) <= 0)}
               />
             ))}
           </div>
@@ -88,4 +91,4 @@ const MenuList: React.FC<MenuListProps> = ({ onItemClick }) => {
   );
 };
 
-export default MenuList; 
+export default MenuList;

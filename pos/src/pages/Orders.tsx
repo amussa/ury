@@ -31,6 +31,7 @@ import {
 } from '../lib/invoice-api';
 import { formatMergedTableLabel } from '../lib/table-utils';
 import { t } from '../i18n';
+import { showCartMutationError } from '../lib/cart-feedback';
 
 function getOrderTableLabel(order: Pick<POSInvoice, 'restaurant_table' | 'custom_merged_tables'>) {
   if (!order.restaurant_table) return null;
@@ -203,7 +204,8 @@ export default function Orders() {
       // Fill POS store
       posStore.resetOrderState();
       posStore.setSelectedOrderType(order.order_type);
-      posStore.setOrderForUpdate(order.name);
+      const stockExcludeInvoice = Number(order.docstatus) === 0 ? order.name : null;
+      posStore.setOrderForUpdate(order.name, stockExcludeInvoice);
       if (order.restaurant_table) {
         posStore.setSelectedTable(order.restaurant_table, order.custom_restaurant_room || null,true);
       }
@@ -225,9 +227,8 @@ export default function Orders() {
         special_dish: 0,
         tax_rate: 0,
       }));
-      for (const cartItem of items) {
-        await posStore.addToOrder(cartItem);
-      }
+      const stockResult = await posStore.hydrateOrderItems(items, stockExcludeInvoice);
+      showCartMutationError(stockResult);
       // Redirect to POS page
       navigate('/');
     } catch (err) {

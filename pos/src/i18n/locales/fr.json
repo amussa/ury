@@ -34,6 +34,11 @@
   "menu": {
     "special_items": "Plats spéciaux"
   },
+  "stock": {
+    "available": "Stock : {{qty}} {{uom}}",
+    "not_tracked": "Stock non suivi",
+    "selected_items": "les articles sélectionnés"
+  },
   "pos_sidebar": {
     "categories": "Catégories",
     "all_items": "Tous les articles"
@@ -52,7 +57,10 @@
     "loading_order": "Chargement des détails de la commande...",
     "edit_item": "Modifier l'article",
     "add_comment": "Ajouter un commentaire",
-    "edit_comment": "Modifier le commentaire"
+    "edit_comment": "Modifier le commentaire",
+    "addon": "Supplément",
+    "stock_total": "Stock : {{qty}} {{uom}}",
+    "stock_remaining": "Restant : {{qty}} {{uom}}"
   },
   "order": {
     "select_to_view": "Sélectionnez une commande pour voir les détails",
@@ -136,7 +144,12 @@
     "discount_exceeds_max": "La remise en pourcentage ne peut pas dépasser 100 %",
     "please_print_first": "Veuillez imprimer la facture avant d'effectuer le paiement",
     "enter_cancel_reason": "Veuillez entrer un motif d'annulation.",
-    "dine_in_restricted": "La consommation sur place n'est pas disponible pour votre rôle"
+    "dine_in_restricted": "La consommation sur place n'est pas disponible pour votre rôle",
+    "invalid_item_quantity": "Saisissez une quantité valide pour {{item}}.",
+    "item_quantity_limit": "{{item}} ne peut pas dépasser {{limit}} unités par ligne.",
+    "item_out_of_stock": "{{item}} est en rupture de stock et n'a pas été ajouté.",
+    "insufficient_item_stock": "Seulement {{available}} {{uom}} de {{item}} est disponible ; {{requested}} a été demandé au total.",
+    "stock_check_failed": "Le stock actuel de {{item}} n'a pas pu être vérifié. Le panier n'a pas été modifié ; veuillez réessayer."
   },
   "success": {
     "order_cancelled": "Commande annulée avec succès",
@@ -293,7 +306,8 @@
     "no_addons": "Aucun supplément",
     "total": "Total",
     "update_order": "Mettre à jour la commande",
-    "add_to_order": "Ajouter à la commande"
+    "add_to_order": "Ajouter à la commande",
+    "checking_stock": "Vérification du stock..."
   },
   "order_types": {
     "dine_in": "Sur place",

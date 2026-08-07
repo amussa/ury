@@ -12,6 +12,10 @@ export interface MenuItem {
   recommended?: boolean;
   description?: string;
   special_dish?: 1 | 0;
+  available_qty?: number;
+  is_stock_item?: boolean;
+  stock_uom?: string | null;
+  negative_stock_allowed?: boolean;
 }
 
 export interface GetMenuResponse {
@@ -45,12 +49,13 @@ export const getRestaurantMenu = async (posProfile: string, room: string | null,
   }
 };
 
-export const getAggregatorMenu = async (aggregator: string) => {
+export const getAggregatorMenu = async (aggregator: string, posProfile?: string) => {
   try {
     const response = await call.get<GetAggregatorMenuResponse>(
       'ury.ury_pos.api.getAggregatorItem',
       {
-        aggregator
+        aggregator,
+        ...(posProfile ? { pos_profile: posProfile } : {}),
       }
     );
     return response.message;
@@ -62,4 +67,4 @@ export const getAggregatorMenu = async (aggregator: string) => {
     }
     throw error;
   }
-}; 
+};

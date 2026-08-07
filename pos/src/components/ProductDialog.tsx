@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, ChangeEvent } from 'react';
-import { X, Plus, Minus } from 'lucide-react';
+import { X, Plus, Minus, Loader2 } from 'lucide-react';
 import { OrderItem, usePOSStore } from '../store/pos-store';
 import { cn } from '@ury/ui';
 import { formatCurrency } from '@ury/core';
 import { Button, Dialog, DialogContent, Input } from '@ury/ui';
 import { db } from '@ury/core';
 import { t } from '../i18n';
+import { showCartMutationError } from '../lib/cart-feedback';
 
 interface Variant {
   id: string;
@@ -39,17 +40,18 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
 }) => {
   const { 
     selectedItem, 
-    addToOrder, 
-    removeFromOrder, 
+    applyOrderItems,
     setSelectedItem, 
-    getItemQuantityFromCart,
+    getItemQuantityByCode,
     activeOrders,
-    menuItems
+    menuItems,
+    stockByItem,
   } = usePOSStore();
   
   // Find existing item in cart
   const existingCartItem = selectedItem ? activeOrders.find(
-    order => order.id === selectedItem.id &&
+    order => order.configurationRole !== 'addon' &&
+    order.id === selectedItem.id &&
     (!order.selectedVariant || order.selectedVariant.id === initialVariant?.id) &&
     (!order.selectedAddons || order.selectedAddons.length === initialAddons.length && 
       order.selectedAddons.every(addon => 
@@ -59,11 +61,12 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
 
   // State for the full item doc (used for all dialog content)
   const [itemDoc, setItemDoc] = useState<any | null>(null);
-  const [, setIsItemLoading] = useState(false);
-  const [, setItemError] = useState<string | null>(null);
+  const [isItemLoading, setIsItemLoading] = useState(false);
+  const [itemError, setItemError] = useState<string | null>(null);
 
   // Fetch Item doc when dialog opens or selectedItem changes
   useEffect(() => {
+    let cancelled = false;
     if (!selectedItem) {
       setItemDoc(null);
       setItemError(null);
@@ -74,15 +77,20 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
     setItemError(null);
     db.getDoc('Item', selectedItem.item)
       .then((doc: any) => {
-        setItemDoc(doc);
+        if (!cancelled) setItemDoc(doc);
       })
       .catch(() => {
-        setItemError('Failed to fetch item details');
-        setItemDoc(null);
+        if (!cancelled) {
+          setItemError('Failed to fetch item details');
+          setItemDoc(null);
+        }
       })
       .finally(() => {
-        setIsItemLoading(false);
+        if (!cancelled) setIsItemLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedItem]);
 
   
@@ -124,56 +132,33 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
         .filter(Boolean)
     : [];
 
-  const [selectedAddons, setSelectedAddons] = useState<Array<{ id: string; name: string; price: number }>>([]);
+  const initialReplacementItemRef = useRef(editMode ? itemToReplace : existingCartItem);
+  const [selectedAddons, setSelectedAddons] = useState<Array<{ id: string; name: string; price: number }>>(
+    (initialAddons.length > 0 ? initialAddons : initialReplacementItemRef.current?.configuredAddons || [])
+      .map(addon => ({ ...addon })),
+  );
   const [quantity, setQuantity] = useState<string>(editMode ? initialQuantity?.toString() || '0' : '0');
   const [comments, setComments] = useState<string>(itemToReplace?.comment || existingCartItem?.comment || '');
+  const [isApplying, setIsApplying] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
-
-  const [, setAddonItemCodes] = useState<string[]>([]);
-  const [isAddonLoading, setIsAddonLoading] = useState(false);
-  const [addonError, setAddonError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedItem) {
-      setAddonItemCodes([]);
-      setAddonError(null);
-      setIsAddonLoading(false);
-      return;
-    }
-    setIsAddonLoading(true);
-    setAddonError(null);
-    db.getDoc('Item', selectedItem.item)
-      .then((doc: any) => {
-        if (Array.isArray(doc.custom_pos_add_on_items)) {
-          const codes = doc.custom_pos_add_on_items
-            .map((entry: any) => entry.item)
-            .filter(Boolean);
-          setAddonItemCodes(codes);
-        } else {
-          setAddonItemCodes([]);
-        }
-      })
-      .catch((_err: any) => {
-        setAddonError('Failed to fetch add-ons');
-        setAddonItemCodes([]);
-      })
-      .finally(() => {
-        setIsAddonLoading(false);
-      });
-  }, [selectedItem]);
+  const configurationIdRef = useRef(
+    initialReplacementItemRef.current?.configurationId
+      || globalThis.crypto?.randomUUID?.()
+      || `configuration-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
 
   // Initialize quantity and comments from cart if not in edit mode
   useEffect(() => {
     if (!editMode && selectedItem) {
-      if (existingCartItem) {
-        setQuantity(existingCartItem.quantity.toString());
-        setComments(existingCartItem.comment || '');
+      const initialReplacementItem = initialReplacementItemRef.current;
+      if (initialReplacementItem) {
+        setQuantity(initialReplacementItem.quantity.toString());
+        setComments(initialReplacementItem.comment || '');
       } else {
-        const cartQuantity = getItemQuantityFromCart(selectedItem);
-        setQuantity(cartQuantity.toString());
+        setQuantity('0');
       }
     }
-  }, [selectedItem, editMode, getItemQuantityFromCart, existingCartItem]);
+  }, [selectedItem, editMode]);
 
   // Handle click outside to close dialog
   useEffect(() => {
@@ -210,6 +195,38 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
   const numericQuantity = quantity === '' ? 0 : parseFloat(quantity);
   const addonsTotal = selectedAddons.reduce((sum, addon) => sum + addon.price, 0);
   const total = (basePrice + addonsTotal) * numericQuantity;
+  const replacementItem = initialReplacementItemRef.current;
+  const replacementItems = replacementItem?.configurationId
+    ? activeOrders.filter(item => item.configurationId === replacementItem.configurationId)
+    : replacementItem
+      ? [replacementItem]
+      : [];
+  const getReplacementQuantity = (itemCode: string) => replacementItems.reduce(
+    (sum, item) => sum + (item.item === itemCode ? item.quantity : 0),
+    0,
+  );
+  const selectedStock = stockByItem[selectedItem.item];
+  const isStockItem = selectedStock?.is_stock_item ?? selectedItem.is_stock_item;
+  const availableQuantity = selectedStock?.available_qty ?? selectedItem.available_qty;
+  const stockUom = selectedStock?.stock_uom ?? selectedItem.stock_uom ?? '';
+  const quantityAlreadyInCart = getItemQuantityByCode(selectedItem.item);
+  const replacedQuantity = getReplacementQuantity(selectedItem.item);
+  const quantityOutsideReplacement = Math.max(0, quantityAlreadyInCart - replacedQuantity);
+  const remainingAfterSelection = typeof availableQuantity === 'number'
+    ? Math.max(0, availableQuantity - quantityOutsideReplacement - (Number.isFinite(numericQuantity) ? numericQuantity : 0))
+    : null;
+  const mainItemExceedsStock = isStockItem === true
+    && typeof availableQuantity === 'number'
+    && quantityOutsideReplacement + numericQuantity > availableQuantity + Number.EPSILON;
+  const selectedAddonsExceedStock = selectedAddons.some((addon) => {
+    const stock = stockByItem[addon.id] || menuItems.find(item => item.item === addon.id);
+    if (stock?.is_stock_item !== true || typeof stock.available_qty !== 'number') return false;
+    const quantityOutsideReplacement = Math.max(
+      0,
+      getItemQuantityByCode(addon.id) - getReplacementQuantity(addon.id),
+    );
+    return quantityOutsideReplacement + numericQuantity > stock.available_qty + Number.EPSILON;
+  });
 
   const handleQuantityChange = (value: string) => {
     // Only allow valid numbers and one decimal point
@@ -226,8 +243,12 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
 
   const handleIncrement = () => {
     const currentNum = quantity === '' ? 0 : parseFloat(quantity);
-    if (currentNum < 99) {
-      setQuantity(Math.round((currentNum + 1) * 1000) / 1000 + '');
+    const nextQuantity = Math.round((currentNum + 1) * 1000) / 1000;
+    const exceedsStock = isStockItem === true
+      && typeof availableQuantity === 'number'
+      && quantityOutsideReplacement + nextQuantity > availableQuantity + Number.EPSILON;
+    if (currentNum < 99 && !exceedsStock) {
+      setQuantity(nextQuantity + '');
     }
   };
 
@@ -238,35 +259,38 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
     }
   };
 
-  const handleAddToOrder = () => {
+  const handleAddToOrder = async () => {
     const numericQuantity = typeof quantity === 'string' ? parseFloat(quantity) : quantity;
     if (isNaN(numericQuantity) || numericQuantity <= 0) {
       return; // Don't add to order if quantity is 0 or invalid
     }
 
-    if (editMode && itemToReplace?.uniqueId) {
-      // Remove the old item first
-      removeFromOrder(itemToReplace.uniqueId);
-    }
-
-    // Add main item as a cart line
+    const configurationId = configurationIdRef.current;
+    // Add main item as a cart line. Add-ons stay as distinct invoice lines,
+    // while configuration metadata lets an edit replace the whole selection.
     const orderItem: OrderItem = {
       ...selectedItem,
       quantity: numericQuantity,
       price: basePrice,
-      comment: comments || undefined
+      comment: comments || undefined,
+      uniqueId: `${configurationId}-main`,
+      configurationId,
+      configurationRole: 'main',
+      configuredAddons: selectedAddons,
     };
-    addToOrder(orderItem);
-
-    // Add each selected add-on as a separate cart line
-    selectedAddons.forEach(addon => {
+    // Add each selected add-on as a separate cart line. The store validates
+    // every item in one batch and commits the complete snapshot only on success.
+    const addonOrderItems = selectedAddons.map(addon => {
       // Find the full menu item details for the add-on
       const menuAddon = menuItems.find(item => item.item === addon.id);
       const addonOrderItem: OrderItem = menuAddon
         ? {
             ...menuAddon,
             quantity: numericQuantity,
-            price: addon.price
+            price: addon.price,
+            uniqueId: `${configurationId}-addon-${addon.id}`,
+            configurationId,
+            configurationRole: 'addon',
           }
         : {
             id: addon.id,
@@ -279,12 +303,25 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
             course: '',
             description: '',
             special_dish: 0 as 0 | 1,
-            tax_rate: 0
+            tax_rate: 0,
+            uniqueId: `${configurationId}-addon-${addon.id}`,
+            configurationId,
+            configurationRole: 'addon',
           } as OrderItem;
-      addToOrder(addonOrderItem);
+      return addonOrderItem;
     });
 
-    handleClose();
+    setIsApplying(true);
+    try {
+      const replaceUniqueIds = replacementItems
+        .map(item => item.uniqueId)
+        .filter((uniqueId): uniqueId is string => Boolean(uniqueId));
+      const result = await applyOrderItems([orderItem, ...addonOrderItems], replaceUniqueIds);
+      if (showCartMutationError(result)) return;
+      handleClose();
+    } finally {
+      setIsApplying(false);
+    }
   };
 
   const handleClose = () => {
@@ -366,6 +403,19 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
             </div>
           </div>
 
+          <div className="mt-4 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
+            {isStockItem === true && typeof availableQuantity === 'number' ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{t('cart.stock_total', { qty: availableQuantity, uom: stockUom })}</span>
+                <span className={cn(mainItemExceedsStock && 'font-semibold text-red-600')}>
+                  {t('cart.stock_remaining', { qty: remainingAfterSelection ?? 0, uom: stockUom })}
+                </span>
+              </div>
+            ) : (
+              <span>{t('stock.not_tracked')}</span>
+            )}
+          </div>
+
           <div className="mt-6">
             <h3 className="text-lg font-semibold mb-3">{t('product_dialog.special_instructions')}</h3>
             <Input
@@ -384,6 +434,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
                 variant="outline"
                 size="icon"
                 className="h-8 w-8 rounded-full"
+                disabled={isApplying}
               >
                 <Minus className="h-4 w-4" />
               </Button>
@@ -400,12 +451,18 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
                   }
                 }}
                 className="w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                disabled={isApplying}
               />
               <Button
                 onClick={handleIncrement}
                 variant="outline"
                 size="icon"
                 className="h-8 w-8 rounded-full"
+                disabled={isApplying || numericQuantity >= 99 || (
+                  isStockItem === true
+                  && typeof availableQuantity === 'number'
+                  && quantityOutsideReplacement + numericQuantity + 1 > availableQuantity + Number.EPSILON
+                )}
               >
                 <Plus className="h-4 w-4" />
               </Button>
@@ -418,19 +475,32 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
               <div className="flex gap-2 flex-wrap">
                 {variantDetails.map((variant: any) => {
                   const menuVariant = menuItems.find((m: any) => m.item === variant.id);
+                  const variantStock = stockByItem[variant.id] || menuVariant;
+                  const variantUnavailable = variantStock?.is_stock_item === true
+                    && (variantStock.available_qty ?? 0) <= 0;
                   return (
                     <button
                       key={variant.id}
                       onClick={() => handleVariantClick(variant.id)}
+                      disabled={variantUnavailable || isApplying}
                       className={cn(
                         'p-2 rounded-lg border text-left w-full flex justify-between items-center',
                         variant.id === itemDoc?.item
                           ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 hover:border-blue-200'
+                          : 'border-gray-200 hover:border-blue-200',
+                        variantUnavailable && 'cursor-not-allowed opacity-50'
                       )}
                     >
                       <div className="font-medium">{variant.name}</div>
-                      <div className="text-sm text-gray-500">{formatCurrency(menuVariant ? Number(menuVariant.price) : 0)}</div>
+                      <div className="text-end text-sm text-gray-500">
+                        <div>{formatCurrency(menuVariant ? Number(menuVariant.price) : 0)}</div>
+                        {variantStock?.is_stock_item === true && (
+                          <div>{t('stock.available', {
+                            qty: variantStock.available_qty ?? 0,
+                            uom: variantStock.stock_uom || '',
+                          })}</div>
+                        )}
+                      </div>
                     </button>
                   );
                 })}
@@ -443,31 +513,59 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
         {/* Right Column - Add-ons and Order Button */}
         <div className="h-auto md:w-1/3 p-6 border-t md:border-t-0 md:border-l border-gray-200 overflow-y-auto flex flex-col">
           <div className="overflow-y-auto mb-6">
-            {isAddonLoading ? (
+            {isItemLoading ? (
               <div className="mb-6 flex items-center justify-center text-gray-500">{t('product_dialog.loading_addons')}</div>
-            ) : addonError ? (
-              <div className="flex items-center justify-center text-red-500">{addonError}</div>
+            ) : itemError ? (
+              <div className="flex items-center justify-center text-red-500">{itemError}</div>
             ) : addonDetails.length > 0 ? (
               <div className="mb-6">
                 <h3 className="text-lg font-semibold mb-3">{t('product_dialog.addons')}</h3>
                 <div className="space-y-2">
-                  {addonDetails.map((addon: any) => (
-                    <button
-                      key={addon.id}
-                      onClick={() => handleAddonToggle({ id: addon.id, name: addon.name, price: Number(addon.price) })}
-                      className={cn(
-                        'w-full p-3 rounded-lg border text-left',
-                        selectedAddons.some(item => item.id === addon.id)
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 hover:border-blue-200'
-                      )}
-                    >
-                      <div className="flex justify-between items-center">
-                        <span>{addon.name}</span>
-                        <span className="text-sm text-gray-500">+{formatCurrency(Number(addon.price))}</span>
-                      </div>
-                    </button>
-                  ))}
+                  {addonDetails.map((addon: any) => {
+                    const stock = stockByItem[addon.id] || menuItems.find(item => item.item === addon.id);
+                    const selected = selectedAddons.some(item => item.id === addon.id);
+                    const remaining = typeof stock?.available_qty === 'number'
+                      ? Math.max(
+                          0,
+                          stock.available_qty
+                            - getItemQuantityByCode(addon.id)
+                            + getReplacementQuantity(addon.id),
+                        )
+                      : null;
+                    const unavailable = !selected
+                      && stock?.is_stock_item === true
+                      && (remaining ?? 0) + Number.EPSILON < Math.max(numericQuantity, 1);
+
+                    return (
+                      <button
+                        key={addon.id}
+                        onClick={() => handleAddonToggle({ id: addon.id, name: addon.name, price: Number(addon.price) })}
+                        disabled={unavailable || isApplying}
+                        className={cn(
+                          'w-full p-3 rounded-lg border text-left',
+                          selected
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-200 hover:border-blue-200',
+                          unavailable && 'cursor-not-allowed opacity-50'
+                        )}
+                      >
+                        <div className="flex justify-between gap-3">
+                          <span>{addon.name}</span>
+                          <span className="text-end text-sm text-gray-500">
+                            <span className="block">+{formatCurrency(Number(addon.price))}</span>
+                            {stock?.is_stock_item === true && (
+                              <span className="block">
+                                {t('stock.available', {
+                                  qty: stock.available_qty ?? 0,
+                                  uom: stock.stock_uom || '',
+                                })}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -484,9 +582,20 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
               onClick={handleAddToOrder}
               className="w-full mt-4"
               size="lg"
-              disabled={numericQuantity === 0}
+              disabled={
+                isApplying
+                || !Number.isFinite(numericQuantity)
+                || numericQuantity <= 0
+                || mainItemExceedsStock
+                || selectedAddonsExceedStock
+              }
             >
-              {editMode || existingCartItem ? t('product_dialog.update_order') : t('product_dialog.add_to_order')}
+              {isApplying ? (
+                <span className="flex items-center justify-center">
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
+                  {t('product_dialog.checking_stock')}
+                </span>
+              ) : editMode || replacementItem ? t('product_dialog.update_order') : t('product_dialog.add_to_order')}
             </Button>
           </div>
         </div>
@@ -495,4 +604,4 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
   );
 };
 
-export default ProductDialog; 
+export default ProductDialog;
