@@ -52,9 +52,10 @@ export const createConfigSlice: StateCreator<
   fetchPosProfile: async (forceRefresh = false) => {
     try {
       set({ isLoading: true, error: null });
+      const cacheKey = `posProfile:${get().user?.name || 'anonymous'}`;
 
       // Check session storage first if not forcing refresh
-      const cached = sessionStorage.getItem('posProfile');
+      const cached = sessionStorage.getItem(cacheKey);
       if (cached && !forceRefresh) {
         const profile = JSON.parse(cached);
         set({ posProfile: profile });
@@ -69,8 +70,10 @@ export const createConfigSlice: StateCreator<
       // If not in cache or forcing refresh, fetch from API
       const profile = await getCombinedPosProfile();
       
-      // Cache the profile
-      sessionStorage.setItem('posProfile', JSON.stringify(profile));
+      // Cache per authenticated user. A shared till/browser must never reuse
+      // the previous operator's branch, warehouse or billing roles.
+      sessionStorage.removeItem('posProfile');
+      sessionStorage.setItem(cacheKey, JSON.stringify(profile));
       set({ posProfile: profile });
 
       // Extract and set allowed roles from the profile
@@ -109,4 +112,4 @@ export const createConfigSlice: StateCreator<
     // After setting new roles, recheck access
     get().checkAccess();
   },
-}); 
+});

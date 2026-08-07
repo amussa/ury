@@ -1,15 +1,10 @@
-import { db, auth } from './client';
+import { db, auth, call } from './client';
 
 type LoggedUserResponse = string | null;
 
 interface UserDoc {
   name: string;
   full_name: string;
-  roles: Array<{
-    name: string;
-    role: string;
-    parent: string;
-  }>;
 }
 
 export const getLoggedUser = async (): Promise<LoggedUserResponse> => {
@@ -24,16 +19,18 @@ export const getLoggedUser = async (): Promise<LoggedUserResponse> => {
 
 export const getUserRoles = async (email: string): Promise<{ roles: string[]; full_name: string }> => {
   try {
-    // Get user details using db.getDoc
     const userDoc = await db.getDoc<UserDoc>('User', email);
-    
-    if (!userDoc || !userDoc.roles) {
+    const rolesResponse = await call.get<string[]>(
+      'frappe.core.doctype.user.user.get_roles',
+      { uid: email }
+    );
+
+    if (!userDoc || !Array.isArray(rolesResponse.message)) {
       return { roles: [], full_name: '' };
     }
 
-    // Extract role names and full_name from the user doc
     return {
-      roles: userDoc.roles.map(role => role.role),
+      roles: rolesResponse.message,
       full_name: userDoc.full_name
     };
   } catch (error) {
