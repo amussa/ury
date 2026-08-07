@@ -4,4 +4,5 @@ export { isUserRestrictedFromTableOrders, canCaptainTransfer } from './frappe/ro
 export type { User, PosProfileCombined } from './types';
 export { storage } from './storage';
 export { formatCurrency, formatInvoiceTime } from './format';
-export { initPrinting, loadQzPrinter, disconnectQzPrinter, printWithQz } from './print/qz';
+export { initPrinting, loadQzPrinter, disconnectQzPrinter, printWithQz, printRawWithQz } from './print/qz';
+export type { ThermalPrintOptions } from './print/qz';

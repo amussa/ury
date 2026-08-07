@@ -229,6 +229,55 @@ export async function getInvoicePrintHtml(invoiceId: string, printFormat: string
   }
 }
 
+/**
+ * Fetch the ESC/POS command stream rendered by a raw Print Format.
+ *
+ * Only valid for formats with `raw_printing` enabled; Frappe raises
+ * `TemplateNotFoundError` otherwise.
+ */
+export async function getInvoiceRawCommands(invoiceId: string, printFormat: string) {
+  const response = await call.get<{ message: { raw_commands: string } }>(
+    'frappe.www.printview.get_rendered_raw_commands',
+    {
+      doc: 'POS Invoice',
+      name: invoiceId,
+      print_format: printFormat,
+    }
+  );
+  return response.message.raw_commands;
+}
+
+const rawFormatCache = new Map<string, boolean>();
+
+/**
+ * Whether a Print Format emits ESC/POS commands instead of HTML.
+ *
+ * Cached per format: the answer is a property of the format document, and the
+ * lookup sits on the critical path of every receipt.
+ */
+export async function isRawPrintFormat(printFormat: string): Promise<boolean> {
+  const cached = rawFormatCache.get(printFormat);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await call.get<{ message: { raw_printing?: number } }>(
+      'frappe.client.get_value',
+      {
+        doctype: 'Print Format',
+        filters: { name: printFormat },
+        fieldname: 'raw_printing',
+      }
+    );
+    const isRaw = response.message?.raw_printing === 1;
+    rawFormatCache.set(printFormat, isRaw);
+    return isRaw;
+  } catch (error) {
+    // A format we cannot inspect is treated as HTML — the previous behaviour.
+    console.error('Error checking print format type:', error);
+    return false;
+  }
+}
+
 export async function networkPrint(orderId: string, printer: string, printFormat: string) {
   await call.post('ury.ury.api.ury_print.network_printing', {
     doctype: 'POS Invoice',
@@ -298,11 +347,28 @@ export function isMergedBill(order: Pick<POSInvoice, 'custom_merged_pos_invoice'
   return !!order.custom_merged_pos_invoice;
 }
 
+/**
+ * Formats that render the merged-bill section themselves.
+ *
+ * `Merged POS Invoice Format` is an A4 layout — a ten-column table inside a
+ * bordered page. Diverting a merged bill to it on an 80 mm thermal printer
+ * squeezes that table into 72 mm of paper, which is illegible regardless of how
+ * the receipt is rasterized. The Gelatiamo thermal formats carry their own
+ * merged block, so a merged bill stays on the profile's format.
+ */
+const MERGE_CAPABLE_PRINT_FORMATS = new Set([
+  'Gelatiamo Recibo 80mm',
+  'Gelatiamo Recibo ESC/POS',
+]);
+
 export function resolvePrintFormat(
   order: Pick<POSInvoice, 'custom_merged_pos_invoice'>,
   defaultFormat: string | null | undefined
 ) {
   if (order.custom_merged_pos_invoice) {
+    if (defaultFormat && MERGE_CAPABLE_PRINT_FORMATS.has(defaultFormat)) {
+      return defaultFormat;
+    }
     return MERGED_POS_INVOICE_PRINT_FORMAT;
   }
   return defaultFormat as string;

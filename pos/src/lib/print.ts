@@ -1,6 +1,8 @@
-import { printWithQz } from '@ury/core';
+import { printWithQz, printRawWithQz } from '@ury/core';
 import {
   getInvoicePrintHtml,
+  getInvoiceRawCommands,
+  isRawPrintFormat,
   networkPrint,
   selectNetworkPrinter,
   updatePrintStatus
@@ -21,8 +23,15 @@ export async function printOrder({ orderId, posProfile, printFormat }: PrintOrde
     if (!qz_host) {
       throw new Error('QZ host is not set');
     }
-    const html = await getInvoicePrintHtml(orderId, format as string);
-    await printWithQz(qz_host, html);
+    // A raw format drives the printer's internal font; an HTML one is
+    // rasterized by QZ. Both go through QZ Tray, so only the payload differs.
+    if (await isRawPrintFormat(format as string)) {
+      const commands = await getInvoiceRawCommands(orderId, format as string);
+      await printRawWithQz(qz_host, commands);
+    } else {
+      const html = await getInvoicePrintHtml(orderId, format as string);
+      await printWithQz(qz_host, html);
+    }
     await updatePrintStatus(orderId);
     return 'qz';
   } else if (print_type === 'network') {
