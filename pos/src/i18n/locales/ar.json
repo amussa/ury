@@ -27,7 +27,7 @@
         "checking_pos_status": "جاري التحقق من حالة نقطة البيع...",
         "cancelling": "جاري الإلغاء...",
         "confirm_cancel": "تأكيد الإلغاء",
-        "loading_ury_pos": "جاري تحميل URY POS...",
+        "loading_ury_pos": "جاري تحميل POS Vendas...",
         "please_wait_setup": "يرجى الانتظار بينما نقوم بضبط الأشياء..."
     },
     "header": {

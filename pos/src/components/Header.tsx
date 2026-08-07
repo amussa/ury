@@ -110,8 +110,8 @@ const Header = () => {
         <div className="flex items-center">
         <Link to="/" className="flex items-center gap-3">
             <img 
-              src="/assets/ury/pos/ury_pos.png" 
-              alt="URY POS" 
+              src="/assets/ury/pos/gelatiamo-logo.png" 
+              alt="Gelatiamo — POS Vendas" 
               className="h-10 w-auto"
             />
           </Link>
