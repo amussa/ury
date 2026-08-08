@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Percent, Coins } from 'lucide-react';
 import { usePOSStore } from '../store/pos-store';
 import { formatCurrency } from '@ury/core';
-import { Button, Input, Dialog, DialogContent } from '@ury/ui';
+import { Button, Input, Dialog, DialogContent, showToast } from '@ury/ui';
 import { call } from '@ury/core';
 import { DEFAULT_PAYMENT_MODE } from '../data/order-types';
 import { t } from '../i18n';
@@ -11,7 +11,6 @@ import { t } from '../i18n';
 interface PaymentDialogProps {
   onClose: () => void;
   grandTotal: number;
-  roundedTotal: number;
   invoice: string;
   customer: string;
   posProfile: string;
@@ -21,6 +20,7 @@ interface PaymentDialogProps {
   owner: string;
   fetchOrders: () => Promise<void>;
   clearSelectedOrder: () => void;
+  printPaidInvoice: (browserPrintWindow: Window | null) => Promise<void>;
   discountPercentage?: number;
   discountAmount?: number;
 }
@@ -28,7 +28,6 @@ interface PaymentDialogProps {
 const PaymentDialog: React.FC<PaymentDialogProps> = ({
   onClose,
   grandTotal,
-  roundedTotal,
   invoice,
   customer,
   posProfile,
@@ -38,13 +37,13 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
   owner,
   fetchOrders,
   clearSelectedOrder,
+  printPaidInvoice,
   discountPercentage,
   discountAmount
 }) => {
   const { paymentModes, fetchPaymentModes, posProfile: storePosProfile } = usePOSStore();
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [discountType] = useState<'percentage'>('percentage'); // Only percentage now
   
   // Calculate effective percentage if only amount is provided (for invoice-level discounts)
   const effectivePercentage = discountPercentage 
@@ -91,9 +90,6 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
 
   // Order summary logic
   const subtotal = baseTotal;
-  const adjustment = roundedTotal - grandTotal;
-  const roundedAdjustment = Math.round(adjustment * 100) / 100;
-  const showAdjustment = Math.abs(roundedAdjustment) > 0.001;
   const totalDiscount = appliedDiscount;
   const discountedTotal = Math.max(0, subtotal - totalDiscount);
   // If discount is applied, round up; else, round normally
@@ -138,6 +134,15 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
   const handlePayment = async () => {
     setIsProcessing(true);
     setError(null);
+
+    // Browser printing needs a tab opened while the click still has user
+    // activation. After payment, the same tab is redirected to the receipt.
+    const browserPrintWindow =
+      storePosProfile?.print_type === 'socket' ? window.open('', '_blank') : null;
+    if (browserPrintWindow) {
+      browserPrintWindow.opener = null;
+    }
+
     try {
       await call.post('ury.ury.doctype.ury_order.ury_order.make_invoice', {
         additionalDiscount: discountValue ? parseFloat(discountValue) : null,
@@ -149,14 +154,22 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
         pos_profile: posProfile,
         table,
       });
-      // Show toast and reload orders (assume showToast and reload available globally)
-      if (typeof window !== 'undefined' && (window as any).showToast) {
-        (window as any).showToast.success('Payment successful');
+
+      showToast.success(t('success.payment_successful'));
+      try {
+        await printPaidInvoice(browserPrintWindow);
+        showToast.success(t('success.printed'));
+      } catch (printError) {
+        browserPrintWindow?.close();
+        const reason = printError instanceof Error ? printError.message : String(printError);
+        showToast.error(t('errors.print_failed', { reason }));
       }
+
       onClose();
       clearSelectedOrder();
       await fetchOrders();
     } catch (err) {
+      browserPrintWindow?.close();
       setError((err as Error).message);
     } finally {
       setIsProcessing(false);

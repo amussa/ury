@@ -13,9 +13,15 @@ interface PrintOrderParams {
   orderId: string;
   posProfile: PosProfileCombined;
   printFormat?: string | null;
+  browserPrintWindow?: Window | null;
 }
 
-export async function printOrder({ orderId, posProfile, printFormat }: PrintOrderParams): Promise<'qz' | 'network' | 'socket'> {
+export async function printOrder({
+  orderId,
+  posProfile,
+  printFormat,
+  browserPrintWindow,
+}: PrintOrderParams): Promise<'qz' | 'network' | 'socket'> {
   const { print_type, qz_host, print_format, printer, name, cashier, multiple_cashier } = posProfile;
   const format = printFormat || print_format;
 
@@ -43,9 +49,15 @@ export async function printOrder({ orderId, posProfile, printFormat }: PrintOrde
     await updatePrintStatus(orderId);
     return 'network';
   } else {
-    // Redirect to printview page
+    // A payment opens this window synchronously before its API request so
+    // browsers do not block the receipt as an unsolicited popup afterwards.
     const url = `/printview?doctype=POS Invoice&name=${orderId}&format=${format}&no_letterhead=1&settings={}&letterhead=No Letterhead&trigger_print=1&_lang=en`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    const printWindow = browserPrintWindow ?? window.open('', '_blank');
+    if (!printWindow) {
+      throw new Error('The receipt window was blocked by the browser');
+    }
+    printWindow.opener = null;
+    printWindow.location.replace(url);
     await updatePrintStatus(orderId);
     return 'socket';
   }

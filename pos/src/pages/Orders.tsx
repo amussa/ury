@@ -718,13 +718,7 @@ export default function Orders() {
                 {isOrderEditable(selectedOrder.status) && (
                   <Button
                     className="flex-1"
-                    onClick={() => {
-                      if (String(selectedOrder.invoice_printed) === '0') {
-                        showToast.error(t('errors.please_print_first'));
-                        return;
-                      }
-                      setShowPaymentDialog(true);
-                    }}
+                    onClick={() => setShowPaymentDialog(true)}
                   >
                     {t('order.payment')}
                   </Button>
@@ -749,7 +743,6 @@ export default function Orders() {
         <PaymentDialog
           onClose={() => setShowPaymentDialog(false)}
           grandTotal={selectedOrderTotals.grandTotal}
-          roundedTotal={selectedOrderTotals.roundedTotal}
           invoice={selectedOrder.name}
           customer={selectedOrder.customer}
           posProfile={posStore.posProfile?.name || ''}
@@ -759,6 +752,20 @@ export default function Orders() {
           owner={posStore.posProfile?.cashier || ''}
           fetchOrders={fetchOrders}
           clearSelectedOrder={clearSelectedOrder}
+          printPaidInvoice={(browserPrintWindow) => {
+            if (!posStore.posProfile) {
+              throw new Error(t('errors.pos_profile_not_loaded'));
+            }
+            return printOrder({
+              orderId: selectedOrder.name,
+              posProfile: posStore.posProfile,
+              printFormat: resolvePrintFormat(
+                selectedOrder,
+                posStore.posProfile.print_format
+              ),
+              browserPrintWindow,
+            }).then(() => undefined);
+          }}
           discountPercentage={selectedOrder.additional_discount_percentage}
           discountAmount={selectedOrder.discount_amount}
         />
