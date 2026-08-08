@@ -25,7 +25,6 @@ def validate(doc, method):
 def before_submit(doc, method):
     assign_single_cashier_from_opening(doc)
     calculate_and_set_times(doc, method)
-    validate_invoice_print(doc, method)
     ro_reload_submit(doc, method)
 
 
@@ -108,17 +107,6 @@ def calculate_and_set_times(doc, method):
     
     formatted_spend_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     doc.total_spend_time = formatted_spend_time
-
-
-def validate_invoice_print(doc, method):
-    # Check if the invoice has been printed
-    invoice_printed = frappe.db.get_value("POS Invoice", doc.name, "invoice_printed")
-
-    # If the invoice is associated with a restaurant table and hasn't been printed
-    if doc.restaurant_table and invoice_printed == 0:
-        frappe.throw(
-            "Printing the invoice is mandatory before submitting. Please print the invoice."
-        )
 
 
 def table_status_delete(doc, method):

@@ -5,14 +5,24 @@ import os
 
 from pypdf import PdfWriter
 
-from ury.ury.doctype.ury_order.ury_order import release_merge_cluster_tables
-
 no_cache = 1
 
 base_template_path = "www/printview.html"
 standard_format = "templates/print_formats/standard.html"
 
 from frappe.www.printview import validate_print_permission
+
+
+def _mark_invoice_printed(invoice):
+    """Record printing without changing restaurant-table occupancy."""
+    frappe.db.set_value(
+        "POS Invoice",
+        invoice,
+        "invoice_printed",
+        1,
+        update_modified=False,
+    )
+    return frappe.db.get_value("POS Invoice", invoice, "invoice_printed") == 1
 
 
 @frappe.whitelist()
@@ -59,15 +69,7 @@ def network_printing(
                 output.write(f)
             conn.printFile(print_settings.printer_name, file_path, name, {})
 
-            restaurant_table, invoice_printed, name = frappe.db.get_value(
-                "POS Invoice", name, ["restaurant_table", "invoice_printed", "name"]
-            )
-
-            if restaurant_table and invoice_printed == 0:
-                frappe.db.set_value("POS Invoice", name, "invoice_printed", 1)
-                release_merge_cluster_tables(restaurant_table)
-            else:
-                frappe.db.set_value("POS Invoice", name, "invoice_printed", 1)
+            _mark_invoice_printed(name)
 
             return "Success"
         except Exception as e:
@@ -117,36 +119,8 @@ def select_network_printer(pos_profile, invoice_id):
 @frappe.whitelist()
 def qz_print_update(invoice):
     try:
-        table = frappe.db.get_value("POS Invoice", invoice, "restaurant_table")
-        
-        if table == None or table == "":
-            # Update invoice_printed
-            frappe.db.set_value(
-                "POS Invoice", invoice, "invoice_printed", 1, update_modified=False
-            )
-            
-            # Validate the update
-            new_invoice_printed = frappe.db.get_value("POS Invoice", invoice, "invoice_printed")
-            if new_invoice_printed != 1:
-                return {"status": "Failure"}                
-        else:
-            invoice_printed = frappe.db.get_value("POS Invoice", invoice, "invoice_printed")
-
-            if invoice_printed == 0:
-                # Update invoice_printed
-                frappe.db.set_value(
-                    "POS Invoice", invoice, "invoice_printed", 1, update_modified=False
-                )
-
-                release_merge_cluster_tables(table)
-                # Validate both updates
-                new_invoice_printed = frappe.db.get_value("POS Invoice", invoice, "invoice_printed")
-                new_table_status = frappe.db.get_value("URY Table", table, "occupied")
-                
-                if new_invoice_printed != 1 or new_table_status != 0:
-                    return {"status": "Failure"}
-        
-        return {"status": "Success"}
+        status = "Success" if _mark_invoice_printed(invoice) else "Failure"
+        return {"status": status}
         
     except Exception as e:
         frappe.log_error(message=e, title="Print Fail")
@@ -158,19 +132,11 @@ def qz_print_update(invoice):
 def print_pos_page(doctype, name, print_format):
     data = {"name": name, "doctype": doctype, "print_format": print_format}
 
-    restaurant_table, branch, name = frappe.db.get_value(
-        "POS Invoice", name, ["restaurant_table", "branch", "name"]
-    )
+    branch = frappe.db.get_value("POS Invoice", name, "branch")
     print_channel = "{}_{}".format("print", branch)
     frappe.publish_realtime(print_channel, {"data": data})
 
-    invoice_printed = frappe.db.get_value("POS Invoice", name, "invoice_printed")
-
-    if invoice_printed == 0:
-        frappe.db.set_value("POS Invoice", name, "invoice_printed", 1)
-
-        if restaurant_table:
-            release_merge_cluster_tables(restaurant_table)
+    _mark_invoice_printed(name)
 
 
 @frappe.whitelist()

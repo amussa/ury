@@ -556,27 +556,14 @@ def release_merge_cluster_tables(table_or_tables):
 
 @frappe.whitelist()
 def release_tables_after_print(invoice):
-
-    invoice_doc = frappe.get_doc(
+    """Compatibility endpoint: printing only marks the invoice as printed."""
+    frappe.db.set_value(
         "POS Invoice",
         invoice,
+        "invoice_printed",
+        1,
+        update_modified=False,
     )
-
-    tables = _get_table_group(
-        invoice_doc.restaurant_table,
-        invoice_doc.custom_merged_tables,
-    )
-
-    for table in tables:
-
-        frappe.db.set_value(
-            "URY Table",
-            table,
-            {
-                "occupied": 0,
-                "latest_invoice_time": None,
-            },
-        )
 
     frappe.db.commit()
 
