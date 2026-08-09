@@ -215,6 +215,25 @@
         "autosave_hint": "• يتم حفظ التغييرات تلقائيًا",
         "zoom_pan_hint": "استخدم التمرير للتكبير • اسحب الخلفية للتحريك"
     },
+    "payment_correction": {
+        "action": "تصحيح الدفع",
+        "title": "تصحيح طرق الدفع",
+        "description": "صحح طرق الدفع للطلب المدفوع {{invoice}} قبل إغلاق نقطة البيع.",
+        "affected_invoices": "سيتم تحديث الفواتير المدمجة التالية: {{invoices}}",
+        "current_payments": "المسجل حالياً",
+        "corrected_payments": "توزيع الدفع الصحيح",
+        "total_entered": "الإجمالي المدخل",
+        "reason_label": "سبب التصحيح",
+        "reason_placeholder": "مثال: تم تسجيل M-Pesa كنقد",
+        "reason_required": "أدخل سبب التصحيح.",
+        "total_mismatch": "يجب أن يبقى الإجمالي المصحح {{total}}.",
+        "no_change": "غيّر طريقة دفع أو مبلغاً واحداً على الأقل.",
+        "load_failed": "تعذر تحميل تصحيح الدفع.",
+        "save_failed": "تعذر تصحيح طرق الدفع.",
+        "save": "حفظ التصحيح",
+        "saving": "جارٍ الحفظ...",
+        "success": "تم تصحيح طرق الدفع بنجاح"
+    },
     "footer": {
         "pos": "نقطة البيع",
         "table": "طاولة",

@@ -291,6 +291,25 @@
     "open_secondary": "Ouvrir l'addition fusionnée",
     "merged_items": "Articles de l'addition fusionnée"
   },
+  "payment_correction": {
+    "action": "Corriger le paiement",
+    "title": "Corriger les modes de paiement",
+    "description": "Corrigez les modes de paiement de la commande payée {{invoice}} avant la clôture du PDV.",
+    "affected_invoices": "Ce paiement fusionné mettra à jour : {{invoices}}",
+    "current_payments": "Actuellement enregistré",
+    "corrected_payments": "Répartition corrigée du paiement",
+    "total_entered": "Total saisi",
+    "reason_label": "Motif de la correction",
+    "reason_placeholder": "Exemple : M-Pesa a été enregistré en espèces",
+    "reason_required": "Saisissez un motif pour la correction.",
+    "total_mismatch": "Le total corrigé doit rester {{total}}.",
+    "no_change": "Modifiez au moins un mode de paiement ou un montant.",
+    "load_failed": "Impossible de charger la correction du paiement.",
+    "save_failed": "Impossible de corriger les modes de paiement.",
+    "save": "Enregistrer la correction",
+    "saving": "Enregistrement...",
+    "success": "Modes de paiement corrigés avec succès"
+  },
   "footer": {
     "pos": "PDV",
     "table": "Table",

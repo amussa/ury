@@ -2,6 +2,7 @@ import { DOCTYPES } from '../data/doctypes';
 import { call, db } from '@ury/core';
 import { OrderStatusType, OrderType } from '../data/order-types';
 import type { Filter } from 'frappe-js-sdk/lib/db/types';
+import { t } from '../i18n';
 
 export interface POSInvoice {
   name: string;
@@ -57,6 +58,21 @@ export interface POSInvoiceItem {
 export interface POSInvoiceTax {
   description: string;
   rate: number;
+}
+
+export interface PaymentCorrectionRow {
+  mode_of_payment: string;
+  amount: number;
+}
+
+export interface PaymentCorrectionDetails {
+  invoice: string;
+  affected_invoices: string[];
+  payment_modes: string[];
+  payments: PaymentCorrectionRow[];
+  total_paid: number;
+  currency: string;
+  precision: number;
 }
 
 interface GetPOSInvoicesResponse {
@@ -150,6 +166,52 @@ export async function searchPosInvoice(query: string, status: string) {
   } catch (error) {
     console.error('Error searching POS invoices:', error);
     throw error;
+  }
+}
+
+function getFrappeErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && '_server_messages' in error) {
+    const serverMessages = (error as { _server_messages?: unknown })._server_messages;
+    if (typeof serverMessages === 'string') {
+      try {
+        const messages = JSON.parse(serverMessages);
+        const lastMessage = JSON.parse(messages[messages.length - 1]);
+        if (typeof lastMessage?.message === 'string') return lastMessage.message;
+      } catch {
+        // Fall through to the normal Error message.
+      }
+    }
+  }
+  return error instanceof Error ? error.message : fallback;
+}
+
+export async function getPaymentCorrectionDetails(invoice: string) {
+  try {
+    const response = await call.get<{ message: PaymentCorrectionDetails }>(
+      'ury.ury_pos.payment_correction.get_payment_correction_details',
+      { invoice }
+    );
+    return response.message;
+  } catch (error) {
+    throw new Error(getFrappeErrorMessage(error, t('payment_correction.load_failed')));
+  }
+}
+
+export async function correctPaymentMethods(
+  invoice: string,
+  payments: PaymentCorrectionRow[],
+  reason: string
+) {
+  try {
+    const response = await call.post<{
+      message: Pick<PaymentCorrectionDetails, 'invoice' | 'affected_invoices' | 'payments' | 'total_paid'>;
+    }>(
+      'ury.ury_pos.payment_correction.correct_payment_methods',
+      { invoice, payments, reason }
+    );
+    return response.message;
+  } catch (error) {
+    throw new Error(getFrappeErrorMessage(error, t('payment_correction.save_failed')));
   }
 }
 
@@ -495,4 +557,4 @@ export async function mergeBills(
     throw new Error(result.message || 'Failed to merge bills');
   }
   return result;
-} 
+}

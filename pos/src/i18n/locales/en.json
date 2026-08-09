@@ -291,6 +291,25 @@
     "open_secondary": "Open merged bill",
     "merged_items": "Items from merged bill"
   },
+  "payment_correction": {
+    "action": "Correct payment",
+    "title": "Correct payment methods",
+    "description": "Correct the payment methods for paid order {{invoice}} before closing the POS.",
+    "affected_invoices": "This merged payment will update: {{invoices}}",
+    "current_payments": "Currently registered",
+    "corrected_payments": "Correct payment distribution",
+    "total_entered": "Total entered",
+    "reason_label": "Reason for correction",
+    "reason_placeholder": "Example: M-Pesa was registered as cash",
+    "reason_required": "Enter a reason for the correction.",
+    "total_mismatch": "The corrected total must remain {{total}}.",
+    "no_change": "Change at least one payment method or amount.",
+    "load_failed": "Failed to load the payment correction.",
+    "save_failed": "Failed to correct the payment methods.",
+    "save": "Save correction",
+    "saving": "Saving...",
+    "success": "Payment methods corrected successfully"
+  },
   "footer": {
     "pos": "POS",
     "table": "Table",

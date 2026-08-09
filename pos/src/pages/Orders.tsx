@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Clock, User, UserCheck, Receipt, Printer, Pencil, X, GitBranch, GitMerge } from 'lucide-react';
+import { Clock, User, UserCheck, Receipt, Printer, Pencil, X, GitBranch, GitMerge, RefreshCcw } from 'lucide-react';
 import { Badge, Button, Card, CardContent } from '@ury/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@ury/ui';
 import { showToast } from '@ury/ui';
@@ -32,6 +32,7 @@ import {
 import { formatMergedTableLabel } from '../lib/table-utils';
 import { t } from '../i18n';
 import { showCartMutationError } from '../lib/cart-feedback';
+import PaymentCorrectionDialog from '../components/PaymentCorrectionDialog';
 
 function getOrderTableLabel(order: Pick<POSInvoice, 'restaurant_table' | 'custom_merged_tables'>) {
   if (!order.restaurant_table) return null;
@@ -68,7 +69,8 @@ export default function Orders() {
     goToPreviousPage,
     selectOrder,
     clearSelectedOrder,
-    orderSearchQuery
+    orderSearchQuery,
+    user,
   } = useRootStore();
 
   const posStore = usePOSStore();
@@ -81,6 +83,7 @@ export default function Orders() {
   const [showPaymentDialog, setShowPaymentDialog] = React.useState(false);
   const [showSplitDialog, setShowSplitDialog] = React.useState(false);
   const [showMergeDialog, setShowMergeDialog] = React.useState(false);
+  const [showPaymentCorrectionDialog, setShowPaymentCorrectionDialog] = React.useState(false);
   const [orderActionsMenuOpen, setOrderActionsMenuOpen] = React.useState(false);
   const [isPrinting, setIsPrinting] = React.useState(false);
 
@@ -117,6 +120,16 @@ export default function Orders() {
     }
     return getCombinedOrderTotals(selectedOrder);
   }, [selectedOrder]);
+
+  const canCorrectSelectedPayment = useMemo(() => {
+    if (!selectedOrder || selectedOrder.status !== 'Paid' || !user) return false;
+    return (
+      user.name === 'Administrator' ||
+      user.name === selectedOrder.waiter ||
+      user.roles.includes('URY Manager') ||
+      user.roles.includes('System Manager')
+    );
+  }, [selectedOrder, user]);
 
   useEffect(() => {
     setOrderActionsMenuOpen(false);
@@ -311,6 +324,18 @@ export default function Orders() {
     const updated = useRootStore.getState().orders.find((o) => o.name === selectedOrder.name);
     if (updated) {
       await selectOrder(updated);
+    }
+  }
+
+  async function handlePaymentCorrected() {
+    if (!selectedOrder) return;
+    const correctedInvoice = selectedOrder.name;
+    await fetchOrders(pagination.currentPage);
+    const refreshed = useRootStore.getState().orders.find((order) => order.name === correctedInvoice);
+    if (refreshed) {
+      await selectOrder(refreshed);
+    } else {
+      clearSelectedOrder();
     }
   }
 
@@ -723,6 +748,16 @@ export default function Orders() {
                     {t('order.payment')}
                   </Button>
                 )}
+                {canCorrectSelectedPayment && (
+                  <Button
+                    variant="outline"
+                    className="flex-1 gap-2"
+                    onClick={() => setShowPaymentCorrectionDialog(true)}
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    {t('payment_correction.action')}
+                  </Button>
+                )}
                 {/* Total */}
                 <span className="ms-auto text-xl font-bold text-gray-900 whitespace-nowrap">
                   {isMergedBill(selectedOrder) ? (
@@ -790,6 +825,14 @@ export default function Orders() {
               : null
           }
           onConfirm={handleSplitBill}
+        />
+      )}
+      {selectedOrder && (
+        <PaymentCorrectionDialog
+          open={showPaymentCorrectionDialog}
+          onOpenChange={setShowPaymentCorrectionDialog}
+          invoice={selectedOrder.name}
+          onCorrected={handlePaymentCorrected}
         />
       )}
     </div>
