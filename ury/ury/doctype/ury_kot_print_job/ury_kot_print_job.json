@@ -1,0 +1,175 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:job_key",
+ "creation": "2026-08-09 22:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "job_key",
+  "kot",
+  "status",
+  "attempts",
+  "column_break_target",
+  "configuration_parent",
+  "printer_setting",
+  "transport",
+  "network_printer",
+  "escpos_host",
+  "escpos_port",
+  "print_format",
+  "section_break_result",
+  "payload_sha256",
+  "payload_bytes",
+  "sent_at",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "job_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Job Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "kot",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "KOT",
+   "options": "URY KOT",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Sent means that the payload was handed to TCP/CUPS; the printer does not provide physical paper confirmation.",
+   "default": "Queued",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Queued\nPrinting\nSent\nFailed\nAmbiguous",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Attempts",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_target",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "configuration_parent",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Configuration Parent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "printer_setting",
+   "fieldtype": "Data",
+   "label": "Printer Setting Row",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transport",
+   "fieldtype": "Data",
+   "label": "Transport",
+   "read_only": 1
+  },
+  {
+   "fieldname": "network_printer",
+   "fieldtype": "Link",
+   "label": "Network Printer",
+   "options": "Network Printer Settings",
+   "read_only": 1
+  },
+  {
+   "fieldname": "escpos_host",
+   "fieldtype": "Data",
+   "label": "ESC/POS Host",
+   "read_only": 1
+  },
+  {
+   "fieldname": "escpos_port",
+   "fieldtype": "Int",
+   "label": "ESC/POS Port",
+   "read_only": 1
+  },
+  {
+   "fieldname": "print_format",
+   "fieldtype": "Link",
+   "label": "Print Format",
+   "options": "Print Format",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_result",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "payload_sha256",
+   "fieldtype": "Data",
+   "label": "Payload SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payload_bytes",
+   "fieldtype": "Int",
+   "label": "Payload Bytes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_at",
+   "fieldtype": "Datetime",
+   "label": "Sent At",
+   "read_only": 1
+  },
+  {
+   "description": "Ambiguous means transmission started but final delivery could not be proven. Do not retry automatically because that may duplicate the KOT.",
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-09 22:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "URY",
+ "name": "URY KOT Print Job",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "URY Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

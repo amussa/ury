@@ -7,7 +7,11 @@
  "engine": "InnoDB",
  "field_order": [
   "bill",
-  "printer"
+  "transport",
+  "printer",
+  "escpos_host",
+  "escpos_port",
+  "escpos_timeout"
  ],
  "fields": [
   {
@@ -18,17 +22,53 @@
    "label": "Bill"
   },
   {
+   "default": "CUPS/PDF",
+   "fieldname": "transport",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Print Transport",
+   "options": "CUPS/PDF\nESC/POS TCP",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.transport != 'ESC/POS TCP'",
    "fieldname": "printer",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Printer",
    "options": "Network Printer Settings"
+  },
+  {
+   "depends_on": "eval:doc.transport == 'ESC/POS TCP'",
+   "description": "IP address or DNS hostname reachable from the ERPNext backend.",
+   "fieldname": "escpos_host",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "ESC/POS Host",
+   "mandatory_depends_on": "eval:doc.transport == 'ESC/POS TCP'"
+  },
+  {
+   "default": "9100",
+   "depends_on": "eval:doc.transport == 'ESC/POS TCP'",
+   "fieldname": "escpos_port",
+   "fieldtype": "Int",
+   "label": "ESC/POS Port",
+   "mandatory_depends_on": "eval:doc.transport == 'ESC/POS TCP'"
+  },
+  {
+   "default": "5",
+   "depends_on": "eval:doc.transport == 'ESC/POS TCP'",
+   "description": "TCP connection timeout in seconds.",
+   "fieldname": "escpos_timeout",
+   "fieldtype": "Float",
+   "label": "ESC/POS Timeout",
+   "mandatory_depends_on": "eval:doc.transport == 'ESC/POS TCP'"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2023-09-28 23:37:08.879383",
+ "modified": "2026-08-09 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "URY",
  "name": "URY Printer Settings",
