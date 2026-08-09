@@ -132,8 +132,13 @@ def create_print_job(kot_name: str, printer_setting: frappe._dict) -> str:
 	return job_key
 
 
-def build_job_key(kot_name: str, printer_setting: str, print_format: str) -> str:
-	identity = "\x1f".join((kot_name, printer_setting, print_format))
+def build_job_key(kot_name: str, printer_setting: str | int, print_format: str) -> str:
+	# MariaDB may return numeric child-row names as ``int`` values.  Normalise
+	# every component before joining so live printer settings such as name ``1``
+	# produce the same deterministic key as their string representation.
+	identity = "\x1f".join(
+		str(component or "") for component in (kot_name, printer_setting, print_format)
+	)
 	return hashlib.sha256(identity.encode()).hexdigest()
 
 

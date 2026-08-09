@@ -17,6 +17,7 @@ class TestKOTPrinting(TestCase):
 	def test_job_key_is_deterministic_and_target_specific(self):
 		first = build_job_key("KOT-0001", "7", "Kitchen")
 		self.assertEqual(first, build_job_key("KOT-0001", "7", "Kitchen"))
+		self.assertEqual(first, build_job_key("KOT-0001", 7, "Kitchen"))
 		self.assertNotEqual(first, build_job_key("KOT-0001", "8", "Kitchen"))
 
 	def test_valid_escpos_target_accepts_ip_or_hostname(self):
