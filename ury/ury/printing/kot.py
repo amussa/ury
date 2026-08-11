@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import socket
+import time
 import traceback
 from contextlib import closing
 
@@ -18,6 +19,7 @@ DEFAULT_ESCPOS_PORT = 9100
 DEFAULT_TIMEOUT_SECONDS = 5.0
 MAX_TIMEOUT_SECONDS = 30.0
 MAX_PAYLOAD_BYTES = 128 * 1024
+CONNECT_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 
 PRINT_JOB_DOCTYPE = "URY KOT Print Job"
 
@@ -177,7 +179,7 @@ def run_print_job(print_job: str) -> dict:
 				_get_printer_timeout(job.printer_setting),
 			)
 			stage = "connect"
-			with closing(socket.create_connection((host, port), timeout=timeout)) as connection:
+			with closing(_connect_escpos(host, port, timeout)) as connection:
 				connection.settimeout(timeout)
 				stage = "send"
 				connection.sendall(payload)
@@ -215,7 +217,14 @@ def render_escpos_payload(kot_name: str, print_format_name: str) -> bytes:
 
 	doc = frappe.get_doc("URY KOT", kot_name)
 	_sanitize_kot_text(doc)
-	rendered = get_rendered_template(doc=doc, print_format=print_format, meta=doc.meta)
+	previous_ignore_print_permissions = frappe.flags.ignore_print_permissions
+	try:
+		# The durable print job is created by the trusted KOT submit hook. Rendering
+		# must not depend on the permissions of the POS/waiter user captured by RQ.
+		frappe.flags.ignore_print_permissions = True
+		rendered = get_rendered_template(doc=doc, print_format=print_format, meta=doc.meta)
+	finally:
+		frappe.flags.ignore_print_permissions = previous_ignore_print_permissions
 	payload = rendered.encode(ESCPOS_ENCODING, errors="replace")
 	if not payload:
 		frappe.throw(_("The rendered ESC/POS payload is empty."))
@@ -260,6 +269,17 @@ def validate_escpos_target(host, port, timeout) -> tuple[str, int, float]:
 	if not 0 < timeout <= MAX_TIMEOUT_SECONDS:
 		frappe.throw(_("ESC/POS timeout must be greater than 0 and at most 30 seconds."))
 	return host, port, timeout
+
+
+def _connect_escpos(host: str, port: int, timeout: float):
+	"""Retry only failures that happen before a socket is returned."""
+	for attempt in range(len(CONNECT_RETRY_DELAYS_SECONDS) + 1):
+		try:
+			return socket.create_connection((host, port), timeout=timeout)
+		except OSError:
+			if attempt == len(CONNECT_RETRY_DELAYS_SECONDS):
+				raise
+			time.sleep(CONNECT_RETRY_DELAYS_SECONDS[attempt])
 
 
 def _get_printer_timeout(printer_setting: str) -> float:

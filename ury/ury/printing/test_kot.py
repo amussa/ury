@@ -5,7 +5,9 @@ import frappe
 
 from ury.ury.printing.kot import (
 	TRANSPORT_ESCPOS,
+	_connect_escpos,
 	build_job_key,
+	render_escpos_payload,
 	run_print_job,
 	sanitize_escpos_text,
 	validate_escpos_target,
@@ -32,6 +34,75 @@ class TestKOTPrinting(TestCase):
 	def test_text_cannot_inject_escpos_control_commands(self):
 		self.assertEqual(sanitize_escpos_text("Sem sal\x1b@\nurgente"), "Sem sal @ urgente")
 
+	@patch("ury.ury.printing.kot.time.sleep")
+	@patch("ury.ury.printing.kot.socket.create_connection")
+	def test_connect_retries_before_any_bytes_are_sent(self, create_connection, sleep):
+		connection = MagicMock()
+		create_connection.side_effect = [TimeoutError("timed out"), OSError("offline"), connection]
+
+		self.assertIs(_connect_escpos("192.168.18.2", 9100, 5), connection)
+		self.assertEqual(create_connection.call_count, 3)
+		self.assertEqual([entry.args[0] for entry in sleep.call_args_list], [1.0, 2.0])
+
+	@patch("ury.ury.printing.kot.time.sleep")
+	@patch("ury.ury.printing.kot.socket.create_connection", side_effect=TimeoutError("timed out"))
+	def test_connect_raises_after_bounded_retries(self, create_connection, sleep):
+		with self.assertRaisesRegex(TimeoutError, "timed out"):
+			_connect_escpos("192.168.18.2", 9100, 5)
+
+		self.assertEqual(create_connection.call_count, 3)
+		self.assertEqual([entry.args[0] for entry in sleep.call_args_list], [1.0, 2.0])
+
+	@patch("ury.ury.printing.kot._sanitize_kot_text")
+	@patch("ury.ury.printing.kot.get_rendered_template")
+	@patch("ury.ury.printing.kot.frappe.get_doc")
+	def test_escpos_render_ignores_user_print_permission_and_restores_flag(
+		self,
+		get_doc,
+		get_rendered_template,
+		sanitize_text,
+	):
+		print_format = frappe._dict(doc_type="URY KOT", raw_printing=1, disabled=0)
+		kot = MagicMock(meta=MagicMock())
+		get_doc.side_effect = [print_format, kot]
+
+		def render_while_permission_is_ignored(**kwargs):
+			self.assertTrue(frappe.flags.ignore_print_permissions)
+			return "KOT"
+
+		get_rendered_template.side_effect = render_while_permission_is_ignored
+		previous_flag = frappe.flags.ignore_print_permissions
+		frappe.flags.ignore_print_permissions = False
+		try:
+			self.assertEqual(render_escpos_payload("KOT-0001", "Kitchen"), b"KOT")
+			self.assertFalse(frappe.flags.ignore_print_permissions)
+		finally:
+			frappe.flags.ignore_print_permissions = previous_flag
+
+		sanitize_text.assert_called_once_with(kot)
+
+	@patch("ury.ury.printing.kot._sanitize_kot_text")
+	@patch("ury.ury.printing.kot.get_rendered_template", side_effect=RuntimeError("render failed"))
+	@patch("ury.ury.printing.kot.frappe.get_doc")
+	def test_escpos_render_restores_permission_flag_after_error(
+		self,
+		get_doc,
+		get_rendered_template,
+		sanitize_text,
+	):
+		print_format = frappe._dict(doc_type="URY KOT", raw_printing=1, disabled=0)
+		kot = MagicMock(meta=MagicMock())
+		get_doc.side_effect = [print_format, kot]
+		previous_flag = frappe.flags.ignore_print_permissions
+		frappe.flags.ignore_print_permissions = False
+		try:
+			with self.assertRaisesRegex(RuntimeError, "render failed"):
+				render_escpos_payload("KOT-0001", "Kitchen")
+			self.assertFalse(frappe.flags.ignore_print_permissions)
+		finally:
+			frappe.flags.ignore_print_permissions = previous_flag
+
+	@patch("ury.ury.printing.kot.now_datetime", return_value="2026-08-11 17:30:00")
 	@patch("ury.ury.printing.kot._finish_job")
 	@patch("ury.ury.printing.kot.socket.create_connection")
 	@patch("ury.ury.printing.kot._get_printer_timeout", return_value=5)
@@ -46,6 +117,7 @@ class TestKOTPrinting(TestCase):
 		get_timeout,
 		create_connection,
 		finish_job,
+		now_datetime,
 	):
 		start_job.return_value = _escpos_job()
 		connection = MagicMock()
@@ -86,6 +158,7 @@ class TestKOTPrinting(TestCase):
 
 		self.assertEqual(result["status"], "Ambiguous")
 		self.assertEqual(finish_job.call_args.args[:2], ("job-1", "Ambiguous"))
+		create_connection.assert_called_once_with(("192.168.18.2", 9100), timeout=5.0)
 
 
 def _escpos_job():
