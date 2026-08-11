@@ -1,0 +1,27 @@
+{
+  "name": "Gelatiamo Atendente",
+  "short_name": "Atendente",
+  "description": "Registo móvel de pedidos de mesa no URY.",
+  "id": "/waiter",
+  "start_url": "/waiter",
+  "scope": "/waiter",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#1d4ed8",
+  "lang": "pt-MZ",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/assets/ury/waiter/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/ury/waiter/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

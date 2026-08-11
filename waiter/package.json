@@ -1,0 +1,43 @@
+{
+  "name": "waiter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test:static": "node scripts/check-auth-pwa.mjs",
+    "typecheck": "tsc -b",
+    "build": "vite build --base=/assets/ury/waiter/ && yarn copy-html-entry",
+    "copy-html-entry": "cp ../ury/public/waiter/index.html ../ury/www/waiter.html",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ury/core": "*",
+    "@ury/ui": "*",
+    "@radix-ui/react-select": "^2.2.5",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "axios": "^1.7.0",
+    "frappe-js-sdk": "^1.10.0",
+    "jsrsasign": "^11.1.0",
+    "lucide-react": "^0.525.0",
+    "qz-tray": "^2.2.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-toastify": "^11.0.5",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "@types/jsrsasign": "^10.5.15",
+    "@types/qz-tray": "^2.2.2",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
+  }
+}

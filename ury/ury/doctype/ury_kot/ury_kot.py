@@ -45,8 +45,12 @@ class URYKOT(Document):
         frappe.publish_realtime(
             kot_channel,
             {"kot": kotjson, "audio_file": audio_file, "last_kot_time": time},
+            after_commit=True,
         )
-        frappe.cache().set_value(cache_key, self.time)
+        kot_time = self.time
+        frappe.db.after_commit.add(
+            lambda: frappe.cache().set_value(cache_key, kot_time)
+        )
 
     def userSetting(self):
         userDoc = frappe.get_doc("User", self.owner)

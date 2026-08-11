@@ -3,6 +3,7 @@
   "workspaces": [
     "packages/*",
     "pos",
+    "waiter",
     "frontend"
   ],
   "scripts": {
@@ -11,9 +12,10 @@
     "ury-mosaic-install": "cd URYMosaic && yarn install --check-files",
     "ury-mosaic-build": "cd URYMosaic && yarn build",
     "ury-posv2-build": "cd pos && yarn build",
+    "ury-waiter-build": "cd waiter && yarn build",
     "ury-frontend-build": "cd frontend && yarn build",
     "postinstall": "yarn ury-pos-install && yarn ury-mosaic-install",
-    "build": "yarn ury-pos-build && yarn ury-mosaic-build && yarn ury-posv2-build && yarn ury-frontend-build"
+    "build": "yarn ury-pos-build && yarn ury-mosaic-build && yarn ury-posv2-build && yarn ury-waiter-build && yarn ury-frontend-build"
   },
   "devDependencies": {
     "@types/qz-tray": "^2.2.2"

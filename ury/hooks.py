@@ -54,6 +54,7 @@ website_context = {"splash_image": "/assets/ury/branding/gelatiamo-logo.png"}
 
 website_route_rules = [
     {"from_route": "/pos/<path:app_path>", "to_route": "pos"},
+    {"from_route": "/waiter/<path:app_path>", "to_route": "waiter"},
     {"from_route": "/urypos/<path:app_path>", "to_route": "urypos"},
     {"from_route": "/URYMosaic/<path:app_path>", "to_route": "URYMosaic"},
     {"from_route": "/ury/<path:app_path>", "to_route": "ury"},
@@ -214,8 +215,8 @@ scheduler_events = {
 
 # Request Events
 # ----------------
-# before_request = ["ury.utils.before_request"]
-# after_request = ["ury.utils.after_request"]
+auth_hooks = ["ury.ury_pos.waiter_security.restrict_waiter_requests"]
+after_request = ["ury.ury_pos.waiter_web.set_waiter_response_headers"]
 
 # Job Events
 # ----------

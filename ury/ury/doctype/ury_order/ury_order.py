@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import json
+from contextlib import contextmanager
 
 import frappe
 from erpnext.accounts.doctype.pos_invoice.pos_invoice import (
@@ -21,10 +22,278 @@ from ury.ury_pos.api import (
     getBranch,
     getBranchRoom,
 )
+from ury.ury_pos.cashier import get_single_cashier_opening
 
 
 class URYOrder(Document):
     pass
+
+
+_APPEND_ONLY_SYSTEM_FIELDS = frozenset({"modified", "modified_by"})
+
+
+@contextmanager
+def _temporary_order_actor(user):
+    """Run strict waiter validation as the cashier who owns the open till."""
+    original_user = getattr(frappe.session, "user", None)
+    should_switch = bool(user and user != original_user)
+    if should_switch:
+        frappe.set_user(user)
+    try:
+        yield
+    finally:
+        if should_switch:
+            frappe.set_user(original_user)
+
+
+def _persisted_order_item_values(item):
+    """Return every persisted child-row field except save audit timestamps."""
+    get_valid_dict = getattr(item, "get_valid_dict", None)
+    if callable(get_valid_dict):
+        values = get_valid_dict(
+            convert_dates_to_str=True,
+            ignore_virtual=True,
+        )
+    else:
+        # Lightweight frappe._dict rows are useful in the mock-only regression
+        # suite; production POS Invoice Item documents use get_valid_dict().
+        values = dict(item)
+    return {
+        fieldname: value
+        for fieldname, value in values.items()
+        if fieldname not in _APPEND_ONLY_SYSTEM_FIELDS
+    }
+
+
+def _snapshot_existing_order_items(invoice):
+    """Capture fields that a waiter append must never rewrite."""
+    snapshot = []
+    for item in invoice.items:
+        if not item.name:
+            frappe.throw(_("An existing order line has no identity."))
+        snapshot.append(
+            (
+                item.name,
+                _persisted_order_item_values(item),
+            )
+        )
+    return snapshot
+
+
+def _assert_existing_order_items_unchanged(invoice, snapshot):
+    """Fail the transaction if validation rewrites an already-sent line."""
+    if not snapshot:
+        return
+
+    expected_names = [name for name, _values in snapshot]
+    expected_name_set = set(expected_names)
+    current_by_name = {item.name: item for item in invoice.items if item.name}
+    current_names = [
+        item.name for item in invoice.items if item.name in expected_name_set
+    ]
+    if current_names != expected_names or any(
+        name not in current_by_name for name in expected_names
+    ):
+        frappe.throw(_("An existing order line was replaced or reordered."))
+
+    for name, values in snapshot:
+        item = current_by_name[name]
+        current_values = _persisted_order_item_values(item)
+        changed = [
+            fieldname
+            for fieldname, expected in values.items()
+            if current_values.get(fieldname) != expected
+        ]
+        changed.extend(
+            fieldname
+            for fieldname in current_values
+            if fieldname not in values
+        )
+        if changed:
+            frappe.throw(
+                _("Existing order line {0} was modified in fields: {1}.").format(
+                    frappe.bold(name), ", ".join(changed)
+                )
+            )
+
+
+def get_authoritative_menu_price_list(menu):
+    """Resolve the only enabled selling Price List bound to a URY Menu."""
+    rows = frappe.get_all(
+        "Price List",
+        filters={"restaurant_menu": menu, "enabled": 1, "selling": 1},
+        fields=["name"],
+        order_by="name",
+        limit=2,
+    )
+    if not rows:
+        frappe.throw(
+            _("No enabled selling Price List is configured for menu {0}.").format(
+                frappe.bold(menu)
+            )
+        )
+    if len(rows) > 1:
+        frappe.throw(
+            _("More than one enabled selling Price List is configured for menu {0}.").format(
+                frappe.bold(menu)
+            ),
+            title=_("Ambiguous Price List"),
+        )
+    return rows[0].name
+
+
+def get_authoritative_item_prices(item_codes, price_list):
+    """Resolve exactly one selling Item Price per item for a Price List."""
+    item_codes = list(dict.fromkeys(code for code in item_codes if code))
+    if not price_list:
+        frappe.throw(_("A selling Price List is required."))
+    if not item_codes:
+        return {}
+
+    rows = frappe.get_all(
+        "Item Price",
+        filters={
+            "item_code": ["in", item_codes],
+            "price_list": price_list,
+            "selling": 1,
+        },
+        fields=["name", "item_code", "price_list_rate"],
+        order_by="item_code, name",
+    )
+    rows_by_item = {}
+    for row in rows:
+        rows_by_item.setdefault(row.item_code, []).append(row)
+
+    missing = [code for code in item_codes if not rows_by_item.get(code)]
+    ambiguous = [
+        code for code in item_codes if len(rows_by_item.get(code, [])) > 1
+    ]
+    if missing:
+        frappe.throw(
+            _("No selling Item Price exists in {0} for: {1}.").format(
+                frappe.bold(price_list),
+                ", ".join(frappe.bold(code) for code in missing),
+            )
+        )
+    if ambiguous:
+        frappe.throw(
+            _("More than one selling Item Price exists in {0} for: {1}.").format(
+                frappe.bold(price_list),
+                ", ".join(frappe.bold(code) for code in ambiguous),
+            ),
+            title=_("Ambiguous Item Price"),
+        )
+
+    return {
+        code: flt(rows_by_item[code][0].price_list_rate)
+        for code in item_codes
+    }
+
+
+def _append_server_priced_order_items(
+    invoice,
+    items,
+    menu,
+    price_list,
+    pos_profile,
+    authoritative_prices=None,
+):
+    """Append new rows with server prices without touching existing child rows."""
+    appended = []
+    cost_center = frappe.db.get_value("POS Profile", pos_profile, "cost_center")
+    item_codes = list(dict.fromkeys(item.get("item") for item in items))
+    prices = (
+        dict(authoritative_prices)
+        if authoritative_prices is not None
+        else get_authoritative_item_prices(item_codes, price_list)
+    )
+    if any(item_code not in prices for item_code in item_codes):
+        frappe.throw(_("An authoritative price is missing for this waiter round."))
+    for item in items:
+        item_code = item.get("item")
+        course = frappe.db.get_value(
+            "URY Menu Item", {"item": item_code, "parent": menu}, "course"
+        )
+        rate = prices[item_code]
+        appended.append(
+            invoice.append(
+                "items",
+                dict(
+                    item_code=item_code,
+                    item_name=item.get("item_name"),
+                    qty=item.get("qty"),
+                    **({"custom_course": course} if course else {}),
+                    comment=item.get("comment"),
+                    rate=rate,
+                    price_list_rate=rate,
+                    base_price_list_rate=rate,
+                    cost_center=cost_center,
+                ),
+            )
+        )
+    return appended
+
+
+def _snapshot_appended_item_prices(items):
+    return [
+        (item, flt(item.get("rate")), flt(item.get("price_list_rate")))
+        for item in items
+    ]
+
+
+def _assert_appended_item_prices_unchanged(snapshot):
+    """Ensure invoice validation cannot silently reprice a waiter round."""
+    changed = [
+        item.get("item_code")
+        for item, rate, price_list_rate in snapshot
+        if flt(item.get("rate")) != rate
+        or flt(item.get("price_list_rate")) != price_list_rate
+    ]
+    if changed:
+        frappe.throw(
+            _(
+                "Server pricing changed while validating: {0}. Handle this "
+                "order in the standard POS."
+            ).format(", ".join(frappe.bold(code) for code in changed)),
+            title=_("Item Price Changed"),
+        )
+
+
+def _snapshot_persisted_appended_item_prices(snapshot):
+    persisted = []
+    for item, rate, price_list_rate in snapshot:
+        if not item.get("name"):
+            frappe.throw(_("A newly appended order line has no identity."))
+        persisted.append(
+            (
+                item.get("name"),
+                item.get("item_code"),
+                rate,
+                price_list_rate,
+            )
+        )
+    return persisted
+
+
+def _assert_persisted_appended_item_prices_unchanged(invoice, snapshot):
+    current_by_name = {item.name: item for item in invoice.items if item.name}
+    changed = []
+    for name, item_code, rate, price_list_rate in snapshot:
+        item = current_by_name.get(name)
+        if (
+            not item
+            or flt(item.get("rate")) != rate
+            or flt(item.get("price_list_rate")) != price_list_rate
+        ):
+            changed.append(item_code)
+    if changed:
+        frappe.throw(
+            _(
+                "Persisted server pricing changed for: {0}. Handle this order "
+                "in the standard POS."
+            ).format(", ".join(frappe.bold(code) for code in changed)),
+            title=_("Item Price Changed"),
+        )
 
 
 def _aggregate_order_stock_qty(items):
@@ -833,6 +1102,18 @@ def split_bill(source_invoice, items_to_move, customer=None):
 def get_order_invoice(table=None, invoiceNo=None, order_type=None, is_payment=None):
     """returns the active invoice linked to the given table"""
 
+    return _get_order_invoice(table, invoiceNo, order_type, is_payment)
+
+
+def _get_order_invoice(
+    table=None,
+    invoiceNo=None,
+    order_type=None,
+    is_payment=None,
+    preserve_existing_price_list=False,
+):
+    """Internal variant with waiter-only preservation controls."""
+
     if table:
         filters = {"docstatus": 0}
         if invoiceNo:
@@ -874,9 +1155,16 @@ def get_order_invoice(table=None, invoiceNo=None, order_type=None, is_payment=No
             "URY Restaurant", restaurant, "default_tax_template"
         )
 
-        invoice.selling_price_list = frappe.db.get_value(
-            "Price List", dict(restaurant_menu=menu_name, enabled=1)
-        )
+        if not (
+            preserve_existing_price_list
+            and invoice_name
+            and invoice.selling_price_list
+        ):
+            # Preserve the established desktop POS resolution semantics. The
+            # waiter path validates this value against its strict menu lookup.
+            invoice.selling_price_list = frappe.db.get_value(
+                "Price List", dict(restaurant_menu=menu_name, enabled=1)
+            )
 
         if invoice_name and invoice.restaurant_table:
             _reconcile_invoice_merged_tables(invoice, persist=True)
@@ -940,13 +1228,96 @@ def sync_order(
     room=None,
     merged_tables=None
 ):
+    """Public POS compatibility wrapper around the shared order save service."""
+    return _sync_order(
+        items=items,
+        cashier=cashier,
+        owner=owner,
+        mode_of_payment=mode_of_payment,
+        customer=customer,
+        no_of_pax=no_of_pax,
+        last_invoice=last_invoice,
+        waiter=waiter,
+        pos_profile=pos_profile,
+        last_modified_time=last_modified_time,
+        table=table,
+        invoice=invoice,
+        comments=comments,
+        order_type=order_type,
+        aggregator_id=aggregator_id,
+        room=room,
+        merged_tables=merged_tables,
+    )
+
+
+def _sync_order(
+    items,
+    cashier,
+    owner,
+    mode_of_payment,
+    customer,
+    no_of_pax,
+    last_invoice,
+    waiter,
+    pos_profile,
+    last_modified_time=None,
+    table=None,
+    invoice=None,
+    comments=None,
+    order_type=None,
+    aggregator_id=None,
+    room=None,
+    merged_tables=None,
+    skip_kot=False,
+    strict_invoice=False,
+    expected_invoice_name=None,
+    append_only=False,
+    expected_price_list=None,
+    expected_item_prices=None,
+):
+    """Save an order while preserving the public POS behaviour by default.
+
+    The waiter-only controls are intentionally available only on this private
+    Python service. Browser clients cannot set them through the public
+    ``sync_order`` endpoint.
+    """
+    if append_only and (not strict_invoice or not skip_kot):
+        frappe.throw(_("Append-only mode requires strict invoice and KOT handling."))
+    if append_only and not expected_price_list:
+        frappe.throw(_("Append-only mode requires an authoritative Price List."))
+    if append_only and not expected_item_prices:
+        frappe.throw(_("Append-only mode requires authoritative item prices."))
     
     user_role = frappe.get_roles()
     posprofile, user_branch = get_pos_profile_for_current_branch(pos_profile)
+    opening = get_single_cashier_opening(
+        posprofile.name,
+        required=True,
+        for_update=True,
+    )
+    if opening:
+        cashier = opening.user
+        owner = opening.user
     
     billing_user = any(
         role.role in user_role for role in posprofile.role_allowed_for_billing
     )
+
+    # Serialize every table order writer, including the desktop POS, before it
+    # selects or creates the draft invoice. This prevents a waiter request and a
+    # billing user from both treating the same table as free.
+    if table:
+        locked_tables = frappe.db.sql(
+            """
+            SELECT name
+            FROM `tabURY Table`
+            WHERE name = %s AND branch = %s
+            FOR UPDATE
+            """,
+            (table, user_branch),
+        )
+        if not locked_tables:
+            frappe.throw(_("The selected table does not belong to your branch."))
 
     # Check if the last invoice was already billed
     if (
@@ -961,7 +1332,25 @@ def sync_order(
         )
         return {"status": "Failure"}
 
-    invoice = get_order_invoice(table, invoice,order_type)
+    requested_invoice = invoice
+    invoice = _get_order_invoice(
+        table,
+        requested_invoice,
+        order_type,
+        preserve_existing_price_list=append_only,
+    )
+    if strict_invoice:
+        if expected_invoice_name:
+            if invoice.is_new() or invoice.name != expected_invoice_name:
+                frappe.throw(
+                    _("The active table order changed. Reload the table."),
+                    frappe.TimestampMismatchError,
+                )
+        elif not invoice.is_new():
+            frappe.throw(
+                _("The table is no longer free. Reload the table."),
+                frappe.TimestampMismatchError,
+            )
     if invoice.branch and invoice.branch != user_branch:
         frappe.throw(
             _("This order does not belong to your branch."),
@@ -1022,12 +1411,16 @@ def sync_order(
 
     customerdoc = frappe.get_doc("Customer", customer)
     invoice.mobile_number = customerdoc.mobile_number
-    if comments:
+    if append_only:
+        invoice.custom_comments = comments or ""
+    elif comments:
         invoice.custom_comments = comments
     invoice.no_of_pax = no_of_pax
     set_pos_profile(invoice, pos_profile)
     invoice.cashier = cashier
     invoice.waiter = waiter
+    if append_only and invoice.is_new():
+        invoice.owner = owner
     invoice.custom_aggregator_id = aggregator_id
     invoice.custom_restaurant_room =room
     if not invoice.restaurant_table:
@@ -1043,6 +1436,14 @@ def sync_order(
             frappe.throw(f"Price list for customer {customer} in branch {invoice.branch} not found in Aggregator Settings.")
     else:
         price_list = invoice.selling_price_list
+    if append_only and expected_price_list and price_list != expected_price_list:
+        frappe.throw(
+            _(
+                "The existing order Price List no longer matches the active "
+                "room menu. Handle this order in the standard POS."
+            ),
+            title=_("Price List Changed"),
+        )
 
     # dummy payment
     if invoice.invoice_created == 0:
@@ -1068,45 +1469,79 @@ def sync_order(
     # - 'ury_pos': Already formatted list, hence using else
     if isinstance(items, str):
         items = json.loads(items)
-    invoice.items = []
+    existing_item_snapshot = (
+        _snapshot_existing_order_items(invoice)
+        if append_only and not invoice.is_new()
+        else []
+    )
+    if not append_only:
+        invoice.items = []
     
-    menu = frappe.db.get_value("URY Menu", {"branch": invoice.branch}, "name")
-   
-    for d in items:
-        
-        course = frappe.db.get_value("URY Menu Item", {"item": d.get("item"),"parent":menu}, "course")
-        
-        item_prices = frappe.db.get_list(
-            "Item Price",
-            filters={"item_code": d.get("item"), "price_list": price_list},
-            fields=["price_list_rate"],
+    if append_only:
+        menu = get_restaurant_and_menu_name(table)[1]
+        appended_items = _append_server_priced_order_items(
+            invoice,
+            items,
+            menu,
+            price_list,
+            pos_profile,
+            authoritative_prices=expected_item_prices,
         )
-
-        if not item_prices:
-            frappe.throw(_("No item price found for Item: {0} in Price List: {1}. Please check the price list settings.").format(d.get("item"), price_list))
-
-        else:
+        appended_item_price_snapshot = _snapshot_appended_item_prices(
+            appended_items
+        )
+    else:
+        appended_item_price_snapshot = []
+        # Keep the established desktop/takeaway/aggregator behaviour intact:
+        # the legacy path resolves the branch menu and uses the first matching
+        # Item Price row exactly as it did before the waiter module existed.
+        menu = frappe.db.get_value("URY Menu", {"branch": invoice.branch}, "name")
+        for item in items:
+            course = frappe.db.get_value(
+                "URY Menu Item",
+                {"item": item.get("item"), "parent": menu},
+                "course",
+            )
+            item_prices = frappe.db.get_list(
+                "Item Price",
+                filters={
+                    "item_code": item.get("item"),
+                    "price_list": price_list,
+                },
+                fields=["price_list_rate"],
+            )
+            if not item_prices:
+                frappe.throw(
+                    _(
+                        "No item price found for Item: {0} in Price List: {1}. "
+                        "Please check the price list settings."
+                    ).format(item.get("item"), price_list)
+                )
+            item_rate = item_prices[0].price_list_rate
             invoice.append(
                 "items",
                 dict(
-                    item_code=d.get("item"),
-                    item_name=d.get("item_name"),
-                    qty=d.get("qty"),
+                    item_code=item.get("item"),
+                    item_name=item.get("item_name"),
+                    qty=item.get("qty"),
                     **({"custom_course": course} if course else {}),
-                    comment=d.get("comment"),
-                    rate = item_prices[0].price_list_rate,
-                    price_list_rate = item_prices[0].price_list_rate,
-                    base_price_list_rate = item_prices[0].price_list_rate,
-                    cost_center = frappe.db.get_value(
+                    comment=item.get("comment"),
+                    rate=item_rate,
+                    price_list_rate=item_rate,
+                    base_price_list_rate=item_rate,
+                    cost_center=frappe.db.get_value(
                         "POS Profile", pos_profile, "cost_center"
-                        ),
+                    ),
                 ),
             )
 
     # Populate warehouse/UOM conversion before validating the final payload.
     # The current invoice is excluded from draft reservations when it is edited,
     # because ordered_qty already represents its complete replacement state.
-    invoice.set_missing_values(for_validate=True)
+    with _temporary_order_actor(opening.user if append_only else None):
+        invoice.set_missing_values(for_validate=True)
+    _assert_existing_order_items_unchanged(invoice, existing_item_snapshot)
+    _assert_appended_item_prices_unchanged(appended_item_price_snapshot)
     ordered_qty = _aggregate_order_stock_qty(invoice.items)
     stock_lock_items = _get_stock_lock_item_codes(ordered_qty)
     locked_bin_qty = _lock_stock_bins(posprofile.warehouse, stock_lock_items)
@@ -1118,19 +1553,68 @@ def sync_order(
         locked_bin_qty=locked_bin_qty,
     )
 
-    try:
-        invoice.save()
-    except Exception as e:
-        frappe.throw(f"Error while updating order: {e}")   
+    waiter_price_list_flag = "ury_waiter_expected_price_list"
+    previous_waiter_price_list = getattr(
+        frappe.flags, waiter_price_list_flag, None
+    )
+    if append_only:
+        setattr(frappe.flags, waiter_price_list_flag, expected_price_list)
+    with _temporary_order_actor(opening.user if append_only else None):
+        try:
+            if append_only:
+                invoice.save(ignore_permissions=True)
+            else:
+                invoice.save()
+        except Exception as e:
+            frappe.throw(f"Error while updating order: {e}")
+        finally:
+            setattr(
+                frappe.flags,
+                waiter_price_list_flag,
+                previous_waiter_price_list,
+            )
+    if append_only and invoice.selling_price_list != expected_price_list:
+        frappe.throw(
+            _(
+                "The order Price List changed during validation. Handle this "
+                "order in the standard POS."
+            ),
+            title=_("Price List Changed"),
+        )
+    _assert_existing_order_items_unchanged(invoice, existing_item_snapshot)
+    _assert_appended_item_prices_unchanged(appended_item_price_snapshot)
+    persisted_appended_item_price_snapshot = (
+        _snapshot_persisted_appended_item_prices(
+            appended_item_price_snapshot
+        )
+    )
+    if append_only:
+        invoice.reload()
+        if invoice.selling_price_list != expected_price_list:
+            frappe.throw(
+                _(
+                    "The persisted order Price List changed during validation. "
+                    "Handle this order in the standard POS."
+                ),
+                title=_("Price List Changed"),
+            )
+        _assert_existing_order_items_unchanged(
+            invoice, existing_item_snapshot
+        )
+        _assert_persisted_appended_item_prices_unchanged(
+            invoice, persisted_appended_item_price_snapshot
+        )
 
 
-    try:
-        kot_execute(invoice.name, customer, table, items, past_item, comments)
+    if not skip_kot:
+        try:
+            kot_execute(invoice.name, customer, table, items, past_item, comments)
 
-    except Exception as e:
-        # If an exception occurs (e.g., "kot" app not found), it will be caught here without affect the code execution.
-        error_msg = f"KOT Creation Failes {str(e)}"            
-        frappe.log_error(error_msg, "KOT Error")
+        except Exception as e:
+            # Keep the existing desktop POS behaviour. The waiter API uses the
+            # private skip path and handles KOT failures transactionally.
+            error_msg = f"KOT Creation Failes {str(e)}"
+            frappe.log_error(error_msg, "KOT Error")
 
     # table status
     if invoice.invoice_printed == 0:

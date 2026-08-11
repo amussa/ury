@@ -36,6 +36,8 @@ def create_kot_doc(
     pos_profile_id,
     kot_naming_series,
     production,
+    *,
+    ignore_permissions=False,
 ):
     pos_invoice = frappe.get_doc("POS Invoice", invoice_id)
     order_number = pos_invoice.custom_ury_order_number
@@ -80,8 +82,13 @@ def create_kot_doc(
                 "course":course
             },
         )
+    if ignore_permissions:
+        # Only the private waiter order service can opt into this. The flag is
+        # retained by the document for the subsequent submit permission check.
+        kot_doc.flags.ignore_permissions = True
     kot_doc.insert()
     kot_doc.submit()
+    return kot_doc.name
 
 # Function to get all production item groups for a given branch
 def get_all_production_item_groups(branch):
@@ -117,7 +124,10 @@ def process_items_for_kot(
     pos_profile_id,
     kot_naming_series,
     kot_type,
+    *,
+    ignore_permissions=False,
 ):
+    result = {"created_kots": [], "unrouted_items": []}
     kot_items = create_order_items(items)
     pos_profile = frappe.get_doc("POS Profile", pos_profile_id)
     productions = frappe.db.get_all(
@@ -132,6 +142,7 @@ def process_items_for_kot(
             item_group = frappe.db.get_value("Item", item["item_code"], "item_group")
             item_code = item["item_code"]
             if item_group not in all_production_item_groups:
+                result["unrouted_items"].append(item_code)
                 frappe.msgprint(
                     f"Item group '{item_group}' for item '{item_code}' is not in any production."
                 )
@@ -167,7 +178,7 @@ def process_items_for_kot(
                 if invoice_exist:
                     kot_type = "Order Modified"
 
-                create_kot_doc(
+                kot_name = create_kot_doc(
                     invoice_id,
                     customer,
                     restaurant_table,
@@ -177,7 +188,15 @@ def process_items_for_kot(
                     pos_profile_id,
                     kot_naming_series,
                     production.name,
+                    ignore_permissions=ignore_permissions,
                 )
+                result["created_kots"].append(
+                    {"name": kot_name, "production": production.name}
+                )
+        result["unrouted_items"] = list(
+            dict.fromkeys(result["unrouted_items"])
+        )
+        return result
     else:
         frappe.throw(
             "Create URY Production unit against POS Profile: %s " % pos_profile.name
@@ -329,8 +348,31 @@ def kot_execute(
     previous_items=[],
     comments=None,
 ):
-    current_items = load_json(current_items)
-    previous_items = load_json(previous_items)
+    """Public legacy KOT endpoint; it never bypasses DocType permissions."""
+    return _kot_execute(
+        invoice_id,
+        customer,
+        restaurant_table,
+        current_items,
+        previous_items,
+        comments,
+    )
+
+
+def _kot_execute(
+    invoice_id,
+    customer,
+    restaurant_table=None,
+    current_items=None,
+    previous_items=None,
+    comments=None,
+    *,
+    ignore_permissions=False,
+):
+    """Internal KOT service with a server-only permission control."""
+    result = {"created_kots": [], "unrouted_items": []}
+    current_items = load_json(current_items or [])
+    previous_items = load_json(previous_items or [])
     new_invoice_items_array = create_order_items(previous_items)
     new_Order_items_array = create_order_items(current_items)
 
@@ -353,7 +395,7 @@ def kot_execute(
     negative_qty_items = [item for item in final_array if int(item["qty"]) <= 0]
     total_cancel_items = negative_qty_items + removed_item
     if positive_qty_items:
-        process_items_for_kot(
+        positive_result = process_items_for_kot(
             invoice_id,
             customer,
             restaurant_table,
@@ -362,7 +404,10 @@ def kot_execute(
             pos_profile_id,
             kot_naming_series,
             "New Order",
+            ignore_permissions=ignore_permissions,
         )
+        result["created_kots"].extend(positive_result["created_kots"])
+        result["unrouted_items"].extend(positive_result["unrouted_items"])
     if total_cancel_items:
         process_items_for_cancel_kot(
             invoice_id,
@@ -375,6 +420,8 @@ def kot_execute(
             "Partially cancelled",
             new_invoice_items_array,
         )
+    result["unrouted_items"] = list(dict.fromkeys(result["unrouted_items"]))
+    return result
 
 
 # Compare two arrays and return the items that are different

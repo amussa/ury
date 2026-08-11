@@ -20,7 +20,7 @@ export const getLoggedUser = async (): Promise<LoggedUserResponse> => {
 export const getUserRoles = async (email: string): Promise<{ roles: string[]; full_name: string }> => {
   try {
     const userDoc = await db.getDoc<UserDoc>('User', email);
-    const rolesResponse = await call.get<string[]>(
+    const rolesResponse = await call.get<{ message: string[] }>(
       'frappe.core.doctype.user.user.get_roles',
       { uid: email }
     );

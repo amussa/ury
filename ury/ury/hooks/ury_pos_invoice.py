@@ -149,6 +149,15 @@ def ro_reload_submit(doc, method):
 
 
 def validate_price_list(doc, method):
+    waiter_price_list = getattr(
+        frappe.flags, "ury_waiter_expected_price_list", None
+    )
+    if waiter_price_list:
+        # The restricted waiter service has already resolved exactly one
+        # enabled selling Price List for the table's room menu. Do not let the
+        # legacy Dine In fallback overwrite it with the restaurant-wide menu.
+        doc.selling_price_list = waiter_price_list
+        return
         
     if doc.restaurant:
         
