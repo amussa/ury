@@ -692,6 +692,35 @@ class TestWaiterAPI(TestCase):
             with self.assertRaises(frappe.ValidationError):
                 _validate_production_routes("Branch A", ["ITEM-A"])
 
+    @patch("ury.ury.api.ury_production_routing.frappe.get_all")
+    def test_menu_course_route_overrides_item_group_route(self, get_all):
+        def route_data(doctype, **_kwargs):
+            if doctype == "Item":
+                return [
+                    frappe._dict(name="CAFE-1", item_group="Gelados", disabled=0),
+                    frappe._dict(name="CONE-1", item_group="Gelados", disabled=0),
+                ]
+            if doctype == "URY Production Unit":
+                return [frappe._dict(name="Balcão"), frappe._dict(name="Bar")]
+            if doctype == "URY Production Item Groups":
+                return [frappe._dict(parent="Balcão", item_group="Gelados")]
+            if doctype == "URY Production Menu Courses":
+                return [frappe._dict(parent="Bar", menu_course="Café")]
+            if doctype == "URY Menu Item":
+                return [
+                    frappe._dict(item="CAFE-1", course="Café"),
+                    frappe._dict(item="CONE-1", course="Gelados"),
+                ]
+            return []
+
+        get_all.side_effect = route_data
+        self.assertEqual(
+            _validate_production_routes(
+                "Polana", ["CAFE-1", "CONE-1"], "Menu Polana"
+            ),
+            {"CAFE-1": "Bar", "CONE-1": "Balcão"},
+        )
+
     def test_persistent_idempotency_replays_same_payload_and_rejects_conflict(self):
         stored_response = {
             "status": "success",

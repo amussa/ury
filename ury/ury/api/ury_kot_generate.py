@@ -3,7 +3,11 @@ from collections import OrderedDict
 
 import frappe
 from frappe.utils import flt
-from ury.ury_pos.api import getBranch
+
+from ury.ury.api.ury_production_routing import (
+    get_order_menu,
+    get_production_route_state,
+)
 
 
 # Load JSON data or return as is if it's already a Python dictionary
@@ -52,6 +56,7 @@ def create_kot_doc(
     production,
     *,
     ignore_permissions=False,
+    menu=None,
 ):
     pos_invoice = frappe.get_doc("POS Invoice", invoice_id)
     order_number = pos_invoice.custom_ury_order_number
@@ -75,14 +80,9 @@ def create_kot_doc(
             "order_no":order_number
         }
     )
-    branch = getBranch()
-    if restaurant_table:
-        room = frappe.db.get_value("URY Table", restaurant_table, "restaurant_room")
-        restaurant = frappe.db.get_value("URY Table", restaurant_table, "restaurant")
-        menu = frappe.db.get_value("Menu for Room", {"room": room,"parent":restaurant}, "menu")
-        
-    else:
-        menu = frappe.db.get_value("URY Restaurant", {"branch": branch}, "active_menu")
+    if not menu:
+        branch = frappe.db.get_value("POS Profile", pos_profile_id, "branch")
+        menu = get_order_menu(branch, restaurant_table)
 
     for item in items:
         course = frappe.db.get_value("URY Menu Item", {"item": item["item_code"],"parent":menu}, "course")
@@ -149,35 +149,33 @@ def process_items_for_kot(
     )
 
     if productions:
-        all_production_item_groups = get_all_production_item_groups(pos_profile.branch)
-        
-        # Iterate through each item and check if item group belongs to a production unit
+        menu = get_order_menu(pos_profile.branch, restaurant_table)
+        route_state = get_production_route_state(
+            pos_profile.branch,
+            [item["item_code"] for item in kot_items],
+            menu,
+        )
+        if route_state["duplicated"]:
+            details = ", ".join(
+                f"{item}: {' / '.join(units)}"
+                for item, units in route_state["duplicated"].items()
+            )
+            frappe.throw(f"More than one production route is configured for: {details}")
+
         for item in kot_items:
-            item_group = frappe.db.get_value("Item", item["item_code"], "item_group")
             item_code = item["item_code"]
-            if item_group not in all_production_item_groups:
+            if item_code not in route_state["routes"]:
                 result["unrouted_items"].append(item_code)
+                item_group = frappe.db.get_value("Item", item_code, "item_group")
                 frappe.msgprint(
-                    f"Item group '{item_group}' for item '{item_code}' is not in any production."
+                    f"No production route is configured for item '{item_code}' "
+                    f"(item group '{item_group}', menu '{menu or '-'}')."
                 )
         for production in productions:
-            productionItemGroupslist = frappe.get_all(
-                "URY Production Item Groups",
-                fields=["item_group"],
-                filters={
-                    "parent": production.name,
-                    "parenttype": "URY Production Unit",
-                },
-                order_by="idx",
-            )
-            productionItemGroups = [
-                item_group.item_group for item_group in productionItemGroupslist
-            ]
             production_items = [
                 item
                 for item in kot_items
-                if frappe.db.get_value("Item", item["item_code"], "item_group")
-                in productionItemGroups
+                if route_state["routes"].get(item["item_code"]) == production.name
             ]
 
             if production_items:
@@ -203,6 +201,7 @@ def process_items_for_kot(
                     kot_naming_series,
                     production.name,
                     ignore_permissions=ignore_permissions,
+                    menu=menu,
                 )
                 result["created_kots"].append(
                     {"name": kot_name, "production": production.name}
@@ -237,16 +236,24 @@ def process_items_for_cancel_kot(
         "URY Production Unit", filters={"branch": pos_profile.branch}, fields=["name"]
     )
 
+    menu = get_order_menu(pos_profile.branch, restaurant_table)
+    route_state = get_production_route_state(
+        pos_profile.branch,
+        [item["item_code"] for item in kot_items],
+        menu,
+    )
+    if route_state["duplicated"]:
+        details = ", ".join(
+            f"{item}: {' / '.join(units)}"
+            for item, units in route_state["duplicated"].items()
+        )
+        frappe.throw(f"More than one production route is configured for: {details}")
+
     for production in productions:
-        productionDoc = frappe.get_doc("URY Production Unit", production.name)
-        productionItemGroups = [
-            item_group.item_group for item_group in productionDoc.item_groups
-        ]
         production_items = [
             item
             for item in kot_items
-            if frappe.get_doc("Item", item["item_code"]).item_group
-            in productionItemGroups
+            if route_state["routes"].get(item["item_code"]) == production.name
         ]
 
         if production_items:
@@ -261,6 +268,7 @@ def process_items_for_cancel_kot(
                 cancel_kot_naming_series,
                 invoiceItems,
                 production.name,
+                menu=menu,
             )
 
 
@@ -276,6 +284,8 @@ def create_cancel_kot_doc(
     cancel_kot_naming_series,
     invoiceItems,
     production,
+    *,
+    menu=None,
 ):
     pos_invoice = frappe.get_doc("POS Invoice", invoice_id)
     order_number = pos_invoice.custom_ury_order_number  
@@ -325,14 +335,9 @@ def create_cancel_kot_doc(
         }
     )
 
-    branch = getBranch()
-    if restaurant_table:
-        room = frappe.db.get_value("URY Table", restaurant_table, "restaurant_room")
-        restaurant = frappe.db.get_value("URY Table", restaurant_table, "restaurant")
-        menu = frappe.db.get_value("Menu for Room", {"room": room,"parent":restaurant}, "menu")
-        
-    else:
-        menu = frappe.db.get_value("URY Restaurant", {"branch": branch}, "active_menu")
+    if not menu:
+        branch = frappe.db.get_value("POS Profile", pos_profile_id, "branch")
+        menu = get_order_menu(branch, restaurant_table)
     invoice_items_by_key = {
         _order_item_key(item): item for item in create_order_items(invoiceItems)
     }

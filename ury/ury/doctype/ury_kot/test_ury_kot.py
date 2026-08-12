@@ -112,7 +112,9 @@ class TestURYKOT(FrappeTestCase):
         )
         self.assertEqual(get_removed_items(previous, current), [])
 
-    @patch("ury.ury.api.ury_kot_generate.getBranch", return_value="Branch A")
+    @patch(
+        "ury.ury.api.ury_kot_generate.get_order_menu", return_value="Menu A"
+    )
     @patch("ury.ury.api.ury_kot_generate.frappe.db.get_value")
     @patch("ury.ury.api.ury_kot_generate.frappe.db.get_list", return_value=[])
     @patch("ury.ury.api.ury_kot_generate.frappe.get_doc")
@@ -121,7 +123,7 @@ class TestURYKOT(FrappeTestCase):
         get_doc,
         _get_list,
         get_value,
-        _get_branch,
+        _get_menu,
     ):
         pos_invoice = frappe._dict(
             custom_ury_order_number="42",

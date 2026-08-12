@@ -1,0 +1,17 @@
+[Unit]
+Description=Gelatiamo Polana printer TCP keepalive
+Documentation=https://github.com/amussa/ury/tree/gelatiamo/ops/printer-keepalive
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=true
+Environment=PRINTER_TARGETS=192.168.18.2:9100,192.168.18.3:9100
+ExecStart=/usr/local/libexec/gelatiamo-printer-keepalive
+TimeoutStartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6

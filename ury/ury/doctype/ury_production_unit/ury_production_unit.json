@@ -13,6 +13,7 @@
   "branch",
   "warehouse",
   "item_groups",
+  "menu_courses",
   "printer_info_section",
   "printer_settings",
   "section_break_sevj",
@@ -53,6 +54,13 @@
    "fieldtype": "Table",
    "label": "Item Groups",
    "options": "URY Production Item Groups"
+  },
+  {
+   "description": "Menu-course routes take priority over Item Groups for this branch.",
+   "fieldname": "menu_courses",
+   "fieldtype": "Table",
+   "label": "Menu Courses",
+   "options": "URY Production Menu Courses"
   },
   {
    "collapsible": 1,

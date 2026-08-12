@@ -3,6 +3,11 @@ import json
 
 from frappe.utils import get_datetime, datetime
 
+from ury.ury.api.ury_production_routing import (
+    get_order_menu,
+    get_production_route_state,
+)
+
 
 def kotValidationThread():
     current_datetime = get_datetime()
@@ -48,27 +53,23 @@ def process_invoice(invoice):
 
     # If no KOT exists for the invoice, process it
     if not kot_list:
-        production_items = []
-        productionDoc = None
-
         # Fetch production units for the branch
         productions = get_productions_for_branch(posInvoice.branch)
+        menu = get_order_menu(posInvoice.branch, posInvoice.restaurant_table)
+        route_state = get_production_route_state(
+            posInvoice.branch,
+            [item.item_code for item in posInvoice.items],
+            menu,
+        )
 
         for p in productions:
-            productionDoc = frappe.get_doc("URY Production Unit", p.name)
-            productionItemGroups = [
-                item_group.item_group for item_group in productionDoc.item_groups
+            production_items = [
+                item
+                for item in posInvoice.items
+                if route_state["routes"].get(item.item_code) == p.name
             ]
-            p_flag = 0
 
-            # Check if items in the invoice belong to production groups
-            for i in posInvoice.items:
-                item = frappe.get_doc("Item", i.item_code)
-                if item.item_group in productionItemGroups:
-                    p_flag = 1
-                    production_items.append(i)
-
-            if p_flag == 1:
+            if production_items:
                 create_kot(
                     invoice,
                     pos_profile,

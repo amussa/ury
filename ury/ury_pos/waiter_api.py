@@ -18,6 +18,7 @@ from frappe import _
 from frappe.utils import cint, flt, get_datetime
 
 from ury.ury.api.ury_kot_generate import _kot_execute
+from ury.ury.api.ury_production_routing import get_production_route_state
 from ury.ury.doctype.ury_order.ury_order import (
     _get_locked_waiter_menu,
     _sync_order,
@@ -869,16 +870,10 @@ def _hydrate_pending_items(menu, pending_items):
     return hydrated
 
 
-def _validate_production_routes(branch, item_codes):
-    item_codes = list(dict.fromkeys(item_codes))
-    items = frappe.get_all(
-        "Item",
-        filters={"name": ["in", item_codes]},
-        fields=["name", "item_group", "disabled"],
-    )
-    item_map = {row.name: row for row in items}
-    missing = [item for item in item_codes if item not in item_map]
-    disabled = [item for item in item_codes if item in item_map and cint(item_map[item].disabled)]
+def _validate_production_routes(branch, item_codes, menu=None):
+    state = get_production_route_state(branch, item_codes, menu)
+    missing = state["missing"]
+    disabled = state["disabled"]
     if missing or disabled:
         frappe.throw(
             _("One or more requested items are missing or disabled: {0}.").format(
@@ -886,55 +881,26 @@ def _validate_production_routes(branch, item_codes):
             )
         )
 
-    productions = frappe.get_all(
-        "URY Production Unit",
-        filters={"branch": branch},
-        fields=["name"],
-        order_by="name",
-    )
-    production_names = [row.name for row in productions]
-    if not production_names:
+    if not state["productions"]:
         frappe.throw(_("No production unit is configured for this branch."))
 
-    assignments = frappe.get_all(
-        "URY Production Item Groups",
-        filters={
-            "parent": ["in", production_names],
-            "parenttype": "URY Production Unit",
-        },
-        fields=["parent", "item_group"],
-    )
-    units_by_group = {}
-    for assignment in assignments:
-        units_by_group.setdefault(assignment.item_group, set()).add(assignment.parent)
-
-    routes = {}
-    unrouted = []
-    duplicated = []
-    for item_code in item_codes:
-        units = sorted(units_by_group.get(item_map[item_code].item_group, set()))
-        if not units:
-            unrouted.append(item_code)
-        elif len(units) > 1:
-            duplicated.append(item_code)
-        else:
-            routes[item_code] = units[0]
-
-    if unrouted:
+    if state["unrouted"]:
         frappe.throw(
             _("No production route is configured for: {0}.").format(
-                ", ".join(frappe.bold(item) for item in unrouted)
+                ", ".join(frappe.bold(item) for item in state["unrouted"])
             ),
             title=_("Missing Production Route"),
         )
-    if duplicated:
+    if state["duplicated"]:
         frappe.throw(
             _("More than one production route is configured for: {0}.").format(
-                ", ".join(frappe.bold(item) for item in duplicated)
+                ", ".join(
+                    frappe.bold(item) for item in state["duplicated"]
+                )
             ),
             title=_("Duplicate Production Route"),
         )
-    return routes
+    return state["routes"]
 
 
 def _first_payment_mode(profile):
@@ -1250,7 +1216,9 @@ def register_order(
         sync_item.pop("_authoritative_base_rate", None)
         sync_items.append(sync_item)
     routes = _validate_production_routes(
-        actor.branch, [row["item"] for row in pending]
+        actor.branch,
+        [row["item"] for row in pending],
+        menu.get("name"),
     )
     # Match the global order lock order: opening -> table -> menu -> invoice ->
     # Price List/Item Price -> stock. The private save service rechecks the
