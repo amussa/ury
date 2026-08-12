@@ -380,19 +380,6 @@ function App() {
     return Math.max(0, Math.min(99, physicalMaximum, optionMaximum));
   }, [draftItems]);
 
-  const availablePriceOptionsByCode = useMemo(() => menu.items.reduce<Record<string, WaiterPriceOption[]>>(
-    (result, item) => {
-      result[item.item_code] = item.price_options
-        .map((option) => ({
-          ...option,
-          available_qty: maximumQuantity(item, option.id),
-        }))
-        .filter((option) => option.available_qty > 0);
-      return result;
-    },
-    {},
-  ), [maximumQuantity, menu.items]);
-
   const selectedOptionFor = useCallback((item: WaiterMenuItem, optionId: string | null) => {
     if (item.price_options.length === 0) return null;
     return item.price_options.find((option) => option.id === optionId)
@@ -442,15 +429,11 @@ function App() {
       showPendingAttemptWarning();
       return;
     }
-    const availableOptions = item.price_options.filter(
-      (option) => maximumQuantity(item, option.id) > 0,
-    );
-    if (item.price_options.length > 0 && availableOptions.length !== 1) {
-      if (availableOptions.length === 0) showStockError(item);
-      else setItemEditor({ item, line: null });
+    if (item.price_options.length > 1) {
+      setItemEditor({ item, line: null });
       return;
     }
-    const option = availableOptions[0] ?? null;
+    const option = item.price_options[0] ?? null;
     if (maximumQuantity(item, option?.id ?? null) <= 0) {
       showStockError(item);
       return;
@@ -833,7 +816,6 @@ function App() {
             selectedCategory={selectedCategory}
             search={search}
             draftQuantityByCode={draftQuantityByCode}
-            availablePriceOptionsByCode={availablePriceOptionsByCode}
             currency={context.currency}
             currencySymbol={context.currency_symbol}
             loading={menuLoading}

@@ -32,7 +32,7 @@ export default function POS() {
 
     const priceOptions = item.price_options || [];
     const availablePriceOptions = priceOptions.filter(option => option.available_qty > 0);
-    if (availablePriceOptions.length > 1) {
+    if (priceOptions.length > 1) {
       if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
       clickCountRef.current = 0;
       setSelectedItem(item);

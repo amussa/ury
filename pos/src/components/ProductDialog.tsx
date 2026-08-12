@@ -54,6 +54,14 @@ const getDefaultPriceOption = (
     || options[0];
 };
 
+const getAvailablePriceOption = (
+  item?: { price_options?: PriceOption[] } | null,
+): PriceOption | undefined => {
+  const options = item?.price_options || [];
+  return options.find(option => option.is_default && option.available_qty > 0)
+    || options.find(option => option.available_qty > 0);
+};
+
 const ProductDialog: React.FC<ProductDialogProps> = ({
   onClose,
   editMode = false,
@@ -170,7 +178,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
   const [selectedPriceOptionId, setSelectedPriceOptionId] = useState<string | undefined>(
     initialPriceOption?.id
       || initialReplacementItemRef.current?.selectedPriceOption?.id
-      || getDefaultPriceOption(selectedItem)?.id,
+      || getAvailablePriceOption(selectedItem)?.id,
   );
   const [selectedAddons, setSelectedAddons] = useState<Array<{ id: string; name: string; price: number }>>(
     (initialAddons.length > 0 ? initialAddons : initialReplacementItemRef.current?.configuredAddons || [])
@@ -206,7 +214,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
       return;
     }
     if (!options.some(option => option.id === selectedPriceOptionId)) {
-      setSelectedPriceOptionId(getDefaultPriceOption(selectedItem)?.id);
+      setSelectedPriceOptionId(getAvailablePriceOption(selectedItem)?.id);
     }
   }, [selectedItem, selectedPriceOptionId]);
 
@@ -458,7 +466,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
     const menuVariant = menuItems.find(menuItem => menuItem.item === variantId);
     if (menuVariant) {
       setSelectedItem(menuVariant);
-      setSelectedPriceOptionId(getDefaultPriceOption(menuVariant)?.id);
+      setSelectedPriceOptionId(getAvailablePriceOption(menuVariant)?.id);
     }
   };
 
@@ -573,9 +581,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
                       <span>
                         <span className="block font-medium text-gray-900">{option.label}</span>
                         <span className="block text-xs text-gray-500">
-                          {unavailable
-                            ? t('product_dialog.sold_out')
-                            : t('product_dialog.option_available', { qty: remaining, uom: stockUom })}
+                          {t('stock.available', { qty: remaining, uom: stockUom })}
                         </span>
                       </span>
                       <span className="font-semibold tabular-nums text-gray-900">
@@ -801,7 +807,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
                 || numericQuantity <= 0
                 || mainItemExceedsStock
                 || selectedOptionExceedsAvailability
-                || (priceOptions.length > 1 && !selectedPriceOption)
+                || (priceOptions.length > 0 && !selectedPriceOption)
                 || selectedAddonsExceedStock
               }
             >

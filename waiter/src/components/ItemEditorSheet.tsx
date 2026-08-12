@@ -141,9 +141,7 @@ export function ItemEditorSheet({
                     <span className="min-w-0 flex-1">
                       <span className="block font-extrabold text-slate-900">{option.label}</span>
                       <span className={cn('mt-0.5 block text-xs', unavailable ? 'font-bold text-red-600' : 'text-slate-500')}>
-                        {unavailable
-                          ? 'Indisponível'
-                          : `${optionMaximum} ${item.stock_uom || 'un.'} disponível${optionMaximum === 1 ? '' : 's'}`}
+                        {`Stock: ${optionMaximum} ${item.stock_uom || 'un.'}${unavailable ? ' · Indisponível' : ''}`}
                       </span>
                     </span>
                     <span className="shrink-0 font-extrabold text-primary">

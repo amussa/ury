@@ -155,6 +155,53 @@ class TestPriceOptions(TestCase):
         self.assertEqual(options[0]["available_qty"], 6)
         self.assertEqual(options[1]["available_qty"], 2)
 
+    @patch("ury.ury_pos.price_options._get_used_promotion_qty", return_value={})
+    @patch("ury.ury_pos.price_options.group_menu_promotions")
+    def test_keeps_normal_option_in_payload_when_its_availability_is_zero(
+        self, group_promotions, _get_used
+    ):
+        group_promotions.return_value = {
+            "CAKE-SLICE": [_promotion(allocated_qty=3)]
+        }
+
+        options = get_item_price_options(
+            "Menu A",
+            {"CAKE-SLICE": 100},
+            {"CAKE-SLICE": 3},
+        )["CAKE-SLICE"]
+
+        self.assertEqual(
+            [option["id"] for option in options],
+            [STANDARD_OPTION_ID, "PROMO-1"],
+        )
+        self.assertEqual(options[0]["available_qty"], 0)
+        self.assertEqual(options[1]["available_qty"], 3)
+
+    @patch(
+        "ury.ury_pos.price_options._get_used_promotion_qty",
+        return_value={"PROMO-1": 3},
+    )
+    @patch("ury.ury_pos.price_options.group_menu_promotions")
+    def test_keeps_exhausted_promotion_in_payload_with_zero_availability(
+        self, group_promotions, _get_used
+    ):
+        group_promotions.return_value = {
+            "CAKE-SLICE": [_promotion(allocated_qty=3)]
+        }
+
+        options = get_item_price_options(
+            "Menu A",
+            {"CAKE-SLICE": 100},
+            {"CAKE-SLICE": 5},
+        )["CAKE-SLICE"]
+
+        self.assertEqual(
+            [option["id"] for option in options],
+            [STANDARD_OPTION_ID, "PROMO-1"],
+        )
+        self.assertEqual(options[0]["available_qty"], 5)
+        self.assertEqual(options[1]["available_qty"], 0)
+
     @patch(
         "ury.ury_pos.price_options._get_used_promotion_qty",
         return_value={"PROMO-1": -3},

@@ -1,7 +1,7 @@
 import { ArrowLeft, ImageOff, MessageSquarePlus, PackageX, Plus, RefreshCw, Search } from 'lucide-react';
 import { Button, Input, cn } from '@ury/ui';
 import { formatMoney, resolveAssetUrl } from '@/lib/format';
-import type { MenuCategory, WaiterMenuItem, WaiterPriceOption } from '@/types';
+import type { MenuCategory, WaiterMenuItem } from '@/types';
 
 interface MenuViewProps {
   tableName: string;
@@ -11,7 +11,6 @@ interface MenuViewProps {
   selectedCategory: string;
   search: string;
   draftQuantityByCode: Record<string, number>;
-  availablePriceOptionsByCode: Record<string, WaiterPriceOption[]>;
   currency: string;
   currencySymbol: string | null;
   loading: boolean;
@@ -49,7 +48,6 @@ export function MenuView({
   selectedCategory,
   search,
   draftQuantityByCode,
-  availablePriceOptionsByCode,
   currency,
   currencySymbol,
   loading,
@@ -170,9 +168,9 @@ export function MenuView({
               const draftQuantity = draftQuantityByCode[item.item_code] ?? 0;
               const stock = stockDetails(item, draftQuantity);
               const imageUrl = resolveAssetUrl(item.image);
-              const availablePriceOptions = availablePriceOptionsByCode[item.item_code] ?? [];
-              const availableOptionCount = availablePriceOptions.length;
-              const optionRates = availablePriceOptions.map((option) => option.rate);
+              const priceOptions = item.price_options;
+              const hasMultiplePrices = priceOptions.length > 1;
+              const optionRates = priceOptions.map((option) => option.rate);
               const minimumRate = optionRates.length ? Math.min(...optionRates) : item.rate;
               const maximumRate = optionRates.length ? Math.max(...optionRates) : item.rate;
               const priceLabel = minimumRate === maximumRate
@@ -183,7 +181,7 @@ export function MenuView({
                   <button
                     type="button"
                     className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-                    disabled={stock.unavailable || interactionDisabled}
+                    disabled={(stock.unavailable && !hasMultiplePrices) || interactionDisabled}
                     onClick={() => onConfigure(item)}
                     aria-label={`Configurar ${item.item_name}`}
                   >
@@ -198,9 +196,9 @@ export function MenuView({
                       <h2 className="line-clamp-2 min-h-10 text-sm font-extrabold leading-5 text-slate-950">{item.item_name}</h2>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         <p className="text-sm font-bold text-primary">{priceLabel}</p>
-                        {availableOptionCount > 1 ? (
+                        {hasMultiplePrices ? (
                           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">
-                            {availableOptionCount} preços
+                            {priceOptions.length} preços
                           </span>
                         ) : null}
                       </div>
@@ -216,20 +214,22 @@ export function MenuView({
                     <Button
                       type="button"
                       className="h-11 w-full gap-1.5 px-2"
-                      disabled={stock.unavailable || interactionDisabled}
+                      disabled={(stock.unavailable && !hasMultiplePrices) || interactionDisabled}
                       onClick={() => onQuickAdd(item)}
                     >
                       <Plus className="h-4 w-4" aria-hidden="true" />
-                      {availableOptionCount > 1 ? 'Escolher preço' : 'Adicionar'}
+                      {hasMultiplePrices ? 'Escolher preço' : 'Adicionar'}
                     </Button>
                     <button
                       type="button"
                       className="flex h-11 w-full items-center justify-center gap-1.5 rounded-xl text-xs font-bold text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:text-slate-300"
-                      disabled={stock.unavailable || interactionDisabled}
+                      disabled={(stock.unavailable && !hasMultiplePrices) || interactionDisabled}
                       onClick={() => onConfigure(item)}
                     >
                       <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
-                      {availableOptionCount > 1 ? 'Configurar' : 'Com observação'}
+                      {hasMultiplePrices
+                        ? stock.unavailable ? 'Ver preços' : 'Configurar'
+                        : 'Com observação'}
                     </button>
                   </div>
                 </article>

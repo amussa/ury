@@ -72,8 +72,10 @@ const MenuList: React.FC<MenuListProps> = ({ onItemClick }) => {
               const physicalAvailable = item.total_available_qty ?? item.available_qty;
               const hasAvailablePriceOption = !item.price_options?.length
                 || item.price_options.some(option => option.available_qty > 0);
+              const hasMultiplePrices = (item.price_options?.length ?? 0) > 1;
               const unavailable = item.is_stock_item === true
-                && ((physicalAvailable ?? 0) <= 0 || !hasAvailablePriceOption);
+                && ((physicalAvailable ?? 0) <= 0 || !hasAvailablePriceOption)
+                && !hasMultiplePrices;
 
               return (
                 <MenuCard

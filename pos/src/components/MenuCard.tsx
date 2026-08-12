@@ -35,13 +35,13 @@ const MenuCard: FC<MenuCardProps> = ({
     || price_options.some(option => option.available_qty > 0);
   const isOutOfStock = is_stock_item === true
     && ((available_qty ?? 0) <= 0 || !hasAvailablePriceOption);
-  const isDisabled = disabled || isOutOfStock;
-  const availableOptions = price_options.filter(option => option.available_qty > 0);
-  const displayedOptions = availableOptions.length > 0 ? availableOptions : price_options;
-  const optionRates = displayedOptions.map(option => option.rate);
+  const hasMultiplePrices = price_options.length > 1;
+  // Keep multi-price items inspectable even when every option is exhausted so
+  // staff can still see that both configured prices exist in the dialog.
+  const isDisabled = disabled || (isOutOfStock && !hasMultiplePrices);
+  const optionRates = price_options.map(option => option.rate);
   const lowestRate = optionRates.length > 0 ? Math.min(...optionRates) : price;
   const highestRate = optionRates.length > 0 ? Math.max(...optionRates) : price;
-  const hasMultiplePrices = availableOptions.length > 1;
   const priceLabel = hasMultiplePrices
     ? `${formatCurrency(lowestRate)}–${formatCurrency(highestRate)}`
     : formatCurrency(lowestRate);
