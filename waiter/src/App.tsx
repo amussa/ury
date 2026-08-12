@@ -33,6 +33,7 @@ import type {
   WaiterContext,
   WaiterMenu,
   WaiterMenuItem,
+  WaiterPriceOption,
   WaiterTable,
 } from '@/types';
 
@@ -334,6 +335,13 @@ function App() {
       description: '',
       image: null,
       rate: line.rate,
+      price_options: line.price_option ? [{
+        id: line.price_option,
+        label: line.price_option_label || 'Preço anterior',
+        rate: line.rate,
+        available_qty: line.available_qty ?? line.qty,
+        is_default: false,
+      }] : [],
       category: '',
       category_label: '',
       available_qty: line.available_qty,
@@ -343,14 +351,73 @@ function App() {
     };
   }, [menu.items]);
 
-  const maximumQuantity = useCallback((item: WaiterMenuItem, excludeLineId?: string): number => {
-    if (!item.is_stock_item || item.negative_stock_allowed || item.available_qty === null) return 99;
-    const otherQuantity = draftItems.reduce(
+  const maximumQuantity = useCallback((
+    item: WaiterMenuItem,
+    priceOption: string | null = null,
+    excludeLineId?: string,
+  ): number => {
+    const otherPhysicalQuantity = draftItems.reduce(
       (sum, line) => line.item_code === item.item_code && line.id !== excludeLineId ? sum + line.qty : sum,
       0,
     );
-    return Math.max(0, Math.min(99, Math.floor(item.available_qty - otherQuantity)));
+    const physicalMaximum = !item.is_stock_item || item.negative_stock_allowed || item.available_qty === null
+      ? 99
+      : Math.max(0, Math.floor(item.available_qty - otherPhysicalQuantity));
+    if (item.price_options.length === 0) {
+      return priceOption && priceOption !== 'standard' ? 0 : Math.min(99, physicalMaximum);
+    }
+
+    const defaultOption = item.price_options.find((option) => option.is_default) ?? null;
+    const effectiveOptionId = priceOption ?? defaultOption?.id ?? null;
+    const option = item.price_options.find((entry) => entry.id === effectiveOptionId);
+    if (!option) return 0;
+    const otherOptionQuantity = draftItems.reduce((sum, line) => {
+      if (line.item_code !== item.item_code || line.id === excludeLineId) return sum;
+      const lineOptionId = line.price_option ?? defaultOption?.id ?? null;
+      return lineOptionId === option.id ? sum + line.qty : sum;
+    }, 0);
+    const optionMaximum = Math.max(0, Math.floor(option.available_qty - otherOptionQuantity));
+    return Math.max(0, Math.min(99, physicalMaximum, optionMaximum));
   }, [draftItems]);
+
+  const availablePriceOptionsByCode = useMemo(() => menu.items.reduce<Record<string, WaiterPriceOption[]>>(
+    (result, item) => {
+      result[item.item_code] = item.price_options
+        .map((option) => ({
+          ...option,
+          available_qty: maximumQuantity(item, option.id),
+        }))
+        .filter((option) => option.available_qty > 0);
+      return result;
+    },
+    {},
+  ), [maximumQuantity, menu.items]);
+
+  const selectedOptionFor = useCallback((item: WaiterMenuItem, optionId: string | null) => {
+    if (item.price_options.length === 0) return null;
+    return item.price_options.find((option) => option.id === optionId)
+      ?? (optionId === null ? item.price_options.find((option) => option.is_default) ?? null : null);
+  }, []);
+
+  const createDraftLine = useCallback((
+    item: WaiterMenuItem,
+    option: WaiterPriceOption | null,
+    qty: number,
+    comment: string,
+  ): DraftOrderItem => ({
+    id: createRequestId(),
+    item_code: item.item_code,
+    item_name: item.item_name,
+    qty,
+    rate: option?.rate ?? item.rate,
+    price_option: option?.id ?? null,
+    price_option_label: option?.label ?? null,
+    comment,
+    available_qty: item.available_qty,
+    is_stock_item: item.is_stock_item,
+    negative_stock_allowed: item.negative_stock_allowed,
+    stock_uom: item.stock_uom,
+  }), []);
 
   const markDraftChanged = useCallback(() => {
     setSubmitError(null);
@@ -375,30 +442,32 @@ function App() {
       showPendingAttemptWarning();
       return;
     }
-    if (maximumQuantity(item) <= 0) {
+    const availableOptions = item.price_options.filter(
+      (option) => maximumQuantity(item, option.id) > 0,
+    );
+    if (item.price_options.length > 0 && availableOptions.length !== 1) {
+      if (availableOptions.length === 0) showStockError(item);
+      else setItemEditor({ item, line: null });
+      return;
+    }
+    const option = availableOptions[0] ?? null;
+    if (maximumQuantity(item, option?.id ?? null) <= 0) {
       showStockError(item);
       return;
     }
     markDraftChanged();
     setDraftItems((current) => {
-      const lineIndex = current.findIndex((line) => line.item_code === item.item_code && !line.comment);
+      const lineIndex = current.findIndex((line) => (
+        line.item_code === item.item_code
+        && line.price_option === (option?.id ?? null)
+        && !line.comment
+      ));
       if (lineIndex < 0) {
-        return [...current, {
-          id: createRequestId(),
-          item_code: item.item_code,
-          item_name: item.item_name,
-          qty: 1,
-          rate: item.rate,
-          comment: '',
-          available_qty: item.available_qty,
-          is_stock_item: item.is_stock_item,
-          negative_stock_allowed: item.negative_stock_allowed,
-          stock_uom: item.stock_uom,
-        }];
+        return [...current, createDraftLine(item, option, 1, '')];
       }
       return current.map((line, index) => index === lineIndex ? { ...line, qty: line.qty + 1 } : line);
     });
-  }, [draftLocked, markDraftChanged, maximumQuantity, showPendingAttemptWarning, showStockError]);
+  }, [createDraftLine, draftLocked, markDraftChanged, maximumQuantity, showPendingAttemptWarning, showStockError]);
 
   const saveItemEditor = useCallback((value: ItemEditorValue) => {
     if (!itemEditor) return;
@@ -407,32 +476,49 @@ function App() {
       return;
     }
     const { item, line } = itemEditor;
-    if (value.qty > maximumQuantity(item, line?.id)) {
+    const option = selectedOptionFor(item, value.priceOption);
+    if (item.price_options.length > 0 && !option) {
+      setNotice({ kind: 'warning', text: `Escolha o preço de ${item.item_name}.` });
+      return;
+    }
+    if (value.qty > maximumQuantity(item, option?.id ?? null, line?.id)) {
       showStockError(item);
       return;
     }
     markDraftChanged();
     setDraftItems((current) => {
       if (line) {
+        const matchingLine = current.find((entry) => (
+          entry.id !== line.id
+          && entry.item_code === line.item_code
+          && entry.price_option === line.price_option
+          && entry.comment === value.comment
+        ));
+        if (matchingLine) {
+          return current
+            .filter((entry) => entry.id !== line.id)
+            .map((entry) => entry.id === matchingLine.id
+              ? { ...entry, qty: entry.qty + value.qty }
+              : entry);
+        }
         return current.map((entry) => entry.id === line.id
           ? { ...entry, qty: value.qty, comment: value.comment }
           : entry);
       }
-      return [...current, {
-        id: createRequestId(),
-        item_code: item.item_code,
-        item_name: item.item_name,
-        qty: value.qty,
-        rate: item.rate,
-        comment: value.comment,
-        available_qty: item.available_qty,
-        is_stock_item: item.is_stock_item,
-        negative_stock_allowed: item.negative_stock_allowed,
-        stock_uom: item.stock_uom,
-      }];
+      const matchingLine = current.find((entry) => (
+        entry.item_code === item.item_code
+        && entry.price_option === (option?.id ?? null)
+        && entry.comment === value.comment
+      ));
+      if (matchingLine) {
+        return current.map((entry) => entry.id === matchingLine.id
+          ? { ...entry, qty: entry.qty + value.qty }
+          : entry);
+      }
+      return [...current, createDraftLine(item, option, value.qty, value.comment)];
     });
     setItemEditor(null);
-  }, [draftLocked, itemEditor, markDraftChanged, maximumQuantity, showPendingAttemptWarning, showStockError]);
+  }, [createDraftLine, draftLocked, itemEditor, markDraftChanged, maximumQuantity, selectedOptionFor, showPendingAttemptWarning, showStockError]);
 
   const increaseLine = useCallback((line: DraftOrderItem) => {
     if (draftLocked) {
@@ -440,7 +526,7 @@ function App() {
       return;
     }
     const item = menuItemForLine(line);
-    if (line.qty >= maximumQuantity(item, line.id)) {
+    if (line.qty >= maximumQuantity(item, line.price_option, line.id)) {
       showStockError(item);
       return;
     }
@@ -466,6 +552,11 @@ function App() {
     markDraftChanged();
     setDraftItems((current) => current.filter((entry) => entry.id !== line.id));
   }, [draftLocked, markDraftChanged, showPendingAttemptWarning]);
+
+  const editorMaximumQuantity = useCallback((priceOption: string | null): number => {
+    if (!itemEditor) return 1;
+    return maximumQuantity(itemEditor.item, priceOption, itemEditor.line?.id);
+  }, [itemEditor, maximumQuantity]);
 
   const backToTables = useCallback(() => {
     if (draftLocked) {
@@ -501,6 +592,7 @@ function App() {
             item_code: line.item_code,
             qty: line.qty,
             expected_rate: line.rate,
+            ...(line.price_option ? { price_option: line.price_option } : {}),
             ...(line.comment ? { comment: line.comment } : {}),
           })),
           no_of_pax: noOfPax,
@@ -585,14 +677,22 @@ function App() {
           // explicit submit uses exactly the rate the waiter can now review.
           setDraftItems((current) => current.map((line) => {
             const item = currentItems.get(line.item_code);
-            return item ? {
+            if (!item) return line;
+            const option = item.price_options.find((entry) => entry.id === line.price_option)
+              ?? (line.price_option === null
+                ? item.price_options.find((entry) => entry.is_default) ?? null
+                : null);
+            const isStandardLine = line.price_option === null || line.price_option === 'standard';
+            return {
               ...line,
-              rate: item.rate,
+              rate: option?.rate ?? (item.price_options.length === 0 && isStandardLine ? item.rate : line.rate),
+              price_option: option?.id ?? line.price_option,
+              price_option_label: option?.label ?? line.price_option_label,
               available_qty: item.available_qty,
               is_stock_item: item.is_stock_item,
               negative_stock_allowed: item.negative_stock_allowed,
               stock_uom: item.stock_uom,
-            } : line;
+            };
           }));
         }
         setPendingSubmission(null);
@@ -733,6 +833,7 @@ function App() {
             selectedCategory={selectedCategory}
             search={search}
             draftQuantityByCode={draftQuantityByCode}
+            availablePriceOptionsByCode={availablePriceOptionsByCode}
             currency={context.currency}
             currencySymbol={context.currency_symbol}
             loading={menuLoading}
@@ -789,7 +890,7 @@ function App() {
             open={Boolean(itemEditor)}
             item={itemEditor?.item ?? null}
             line={itemEditor?.line ?? null}
-            maximumQuantity={itemEditor ? maximumQuantity(itemEditor.item, itemEditor.line?.id) : 1}
+            maximumQuantity={editorMaximumQuantity}
             currency={context.currency}
             currencySymbol={context.currency_symbol}
             onClose={() => {

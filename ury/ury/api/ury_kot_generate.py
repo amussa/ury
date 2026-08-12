@@ -1,6 +1,8 @@
 import json
+from collections import OrderedDict
 
 import frappe
+from frappe.utils import flt
 from ury.ury_pos.api import getBranch
 
 
@@ -11,18 +13,30 @@ def load_json(data):
     return data
 
 
-# Create a list of order items from a list of input items
+# Create a kitchen-facing list of order items from invoice/cart lines. Price
+# options are deliberately not part of the identity: the kitchen prepares the
+# same item whether it was sold at the normal or promotional price. Comments
+# remain part of the identity so distinct preparation instructions stay on
+# distinct KOT lines.
 def create_order_items(items):
-    order_items = []
+    order_items = OrderedDict()
     for item in items:
-        order_item = {
-            "item_code": item.get("item", item.get("item_code")),
-            "qty": item["qty"],
-            "item_name": item["item_name"],
-            "comments": item.get("comment", item.get("comments", "")),
-        }
-        order_items.append(order_item)
-    return order_items
+        item_code = item.get("item", item.get("item_code"))
+        comments = item.get("comment", item.get("comments", "")) or ""
+        key = (item_code, comments)
+        if key not in order_items:
+            order_items[key] = {
+                "item_code": item_code,
+                "qty": 0,
+                "item_name": item["item_name"],
+                "comments": comments,
+            }
+        order_items[key]["qty"] = flt(order_items[key]["qty"]) + flt(item["qty"])
+    return list(order_items.values())
+
+
+def _order_item_key(item):
+    return (item.get("item_code"), item.get("comments") or "")
 
 
 # Create a KOT (Kitchen Order Ticket) document
@@ -217,6 +231,7 @@ def process_items_for_cancel_kot(
 ):
 
     kot_items = create_order_items(items)
+    invoiceItems = create_order_items(invoiceItems)
     pos_profile = frappe.get_doc("POS Profile", pos_profile_id)
     productions = frappe.db.get_all(
         "URY Production Unit", filters={"branch": pos_profile.branch}, fields=["name"]
@@ -318,21 +333,34 @@ def create_cancel_kot_doc(
         
     else:
         menu = frappe.db.get_value("URY Restaurant", {"branch": branch}, "active_menu")
+    invoice_items_by_key = {
+        _order_item_key(item): item for item in create_order_items(invoiceItems)
+    }
     for cancelItem in cancel_items:
         course = frappe.db.get_value("URY Menu Item", {"item": cancelItem["item_code"],"parent":menu}, "course")
-        for item in invoiceItems:
-            if cancelItem["item_code"] == item["item_code"]:
-                kot_cancel_doc.append(
-                    "kot_items",
-                    {
-                        "item": cancelItem["item_code"],
-                        "item_name": cancelItem["item_name"],
-                        "cancelled_qty": abs(int(cancelItem["qty"])),
-                        "quantity": item["qty"],
-                        "comments": cancelItem["comments"],
-                        "course":course
-                    },
-                )
+        item = invoice_items_by_key.get(_order_item_key(cancelItem))
+        if not item:
+            # Historical KOT payloads did not always preserve line comments.
+            item = next(
+                (
+                    row
+                    for row in invoiceItems
+                    if cancelItem["item_code"] == row["item_code"]
+                ),
+                None,
+            )
+        if item:
+            kot_cancel_doc.append(
+                "kot_items",
+                {
+                    "item": cancelItem["item_code"],
+                    "item_name": cancelItem["item_name"],
+                    "cancelled_qty": abs(flt(cancelItem["qty"])),
+                    "quantity": item["qty"],
+                    "comments": cancelItem["comments"],
+                    "course":course
+                },
+            )
 
     kot_cancel_doc.insert()
     kot_cancel_doc.submit()
@@ -391,8 +419,8 @@ def _kot_execute(
             % pos_profile.name
         )
 
-    positive_qty_items = [item for item in final_array if int(item["qty"]) > 0]
-    negative_qty_items = [item for item in final_array if int(item["qty"]) <= 0]
+    positive_qty_items = [item for item in final_array if flt(item["qty"]) > 0]
+    negative_qty_items = [item for item in final_array if flt(item["qty"]) < 0]
     total_cancel_items = negative_qty_items + removed_item
     if positive_qty_items:
         positive_result = process_items_for_kot(
@@ -426,27 +454,24 @@ def _kot_execute(
 
 # Compare two arrays and return the items that are different
 def compare_two_array(array_1, array_2):
-    finalarray = []
-    for index, x in enumerate(array_1):
-        a = list(
-            filter(
-                lambda y: y["item_code"] == x["item_code"] and y["qty"] == x["qty"],
-                array_2,
-            )
-        )
-        if len(a) == 0:
-            b = list(filter(lambda z: z["item_code"] == x["item_code"], array_2))
-            for qtb in b:
-                x["qty"] = int(x["qty"]) - int(qtb["qty"])
-            finalarray.append(x)
-    return finalarray
+    current = create_order_items(array_1)
+    previous_by_key = {
+        _order_item_key(item): item for item in create_order_items(array_2)
+    }
+    changed = []
+    for item in current:
+        previous_qty = flt(previous_by_key.get(_order_item_key(item), {}).get("qty"))
+        delta = flt(item["qty"]) - previous_qty
+        if abs(delta) <= 1e-9:
+            continue
+        changed.append({**item, "qty": delta})
+    return changed
 
 
 # Get the items that have been removed from the second array compared to the first array
 def get_removed_items(array_1, array_2):
-    removed_objects = [
-        obj
-        for obj in array_1
-        if obj["item_code"] not in [x["item_code"] for x in array_2]
-    ]
-    return removed_objects
+    previous = create_order_items(array_1)
+    current_keys = {
+        _order_item_key(item) for item in create_order_items(array_2)
+    }
+    return [item for item in previous if _order_item_key(item) not in current_keys]

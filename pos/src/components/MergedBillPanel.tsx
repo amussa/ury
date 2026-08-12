@@ -88,7 +88,14 @@ const MergedBillPanel = ({ order, onOpenSecondary }: MergedBillPanelProps) => {
               key={item.name}
               className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
             >
-              <span className="truncate text-gray-900">{item.item_name}</span>
+              <span className="min-w-0 truncate text-gray-900">
+                <span className="block truncate">{item.item_name}</span>
+                {item.custom_ury_price_option_label && (
+                  <span className="block text-xs font-medium text-blue-700">
+                    {t('cart.price_option', { option: item.custom_ury_price_option_label })}
+                  </span>
+                )}
+              </span>
               <span className="ms-2 shrink-0 text-gray-600 tabular-nums">
                 {item.qty} × {formatCurrency(item.rate)}
               </span>

@@ -376,14 +376,54 @@ def get_custom_fields():
 			},
 		],
 
-		"POS Invoice Iten": [
+		"POS Invoice Item": [
 			{
 				"fieldname": "comment",
 				"fieldtype": "Data",
 				"label": "Comment",
 				"insert_after": "description",
 				"translatable": 0
-			}
+			},
+			{
+				"fieldname": "custom_ury_price_option",
+				"fieldtype": "Data",
+				"label": "URY Price Option",
+				"insert_after": "custom_course",
+				"hidden": 1,
+				"read_only": 1,
+				"search_index": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_price_option_label",
+				"fieldtype": "Data",
+				"label": "Price Option",
+				"insert_after": "custom_ury_price_option",
+				"read_only": 1,
+				"print_hide_if_no_value": 1,
+				"module": "URY",
+			},
+		],
+
+		"Sales Invoice Item": [
+			{
+				"fieldname": "custom_ury_price_option",
+				"fieldtype": "Data",
+				"label": "URY Price Option",
+				"insert_after": "custom_course",
+				"hidden": 1,
+				"read_only": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_price_option_label",
+				"fieldtype": "Data",
+				"label": "Price Option",
+				"insert_after": "custom_ury_price_option",
+				"read_only": 1,
+				"print_hide_if_no_value": 1,
+				"module": "URY",
+			},
 		],
 
 		"URY KOT": [

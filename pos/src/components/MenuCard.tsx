@@ -2,6 +2,7 @@ import { FC } from 'react';
 import { cn } from '@ury/ui';
 import { formatCurrency } from '@ury/core';
 import { t } from '../i18n';
+import type { PriceOption } from '../lib/menu-api';
 
 interface MenuCardProps {
   id: string;
@@ -15,6 +16,7 @@ interface MenuCardProps {
   available_qty?: number;
   is_stock_item?: boolean;
   stock_uom?: string | null;
+  price_options?: PriceOption[];
 }
 
 const MenuCard: FC<MenuCardProps> = ({ 
@@ -27,9 +29,22 @@ const MenuCard: FC<MenuCardProps> = ({
   available_qty,
   is_stock_item,
   stock_uom,
+  price_options = [],
 }) => {
-  const isOutOfStock = is_stock_item === true && (available_qty ?? 0) <= 0;
+  const hasAvailablePriceOption = price_options.length === 0
+    || price_options.some(option => option.available_qty > 0);
+  const isOutOfStock = is_stock_item === true
+    && ((available_qty ?? 0) <= 0 || !hasAvailablePriceOption);
   const isDisabled = disabled || isOutOfStock;
+  const availableOptions = price_options.filter(option => option.available_qty > 0);
+  const displayedOptions = availableOptions.length > 0 ? availableOptions : price_options;
+  const optionRates = displayedOptions.map(option => option.rate);
+  const lowestRate = optionRates.length > 0 ? Math.min(...optionRates) : price;
+  const highestRate = optionRates.length > 0 ? Math.max(...optionRates) : price;
+  const hasMultiplePrices = availableOptions.length > 1;
+  const priceLabel = hasMultiplePrices
+    ? `${formatCurrency(lowestRate)}–${formatCurrency(highestRate)}`
+    : formatCurrency(lowestRate);
   const stockLabel = is_stock_item === false
     ? t('stock.not_tracked')
     : t('stock.available', { qty: available_qty ?? 0, uom: stock_uom || '' });
@@ -97,10 +112,15 @@ const MenuCard: FC<MenuCardProps> = ({
         </div>
 
         {/* Price section - pushed to bottom */}
-        <div className="mt-auto pt-2">
+        <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           <span className="text-sm font-semibold text-gray-900 tabular-nums">
-            {formatCurrency(price)}
+            {priceLabel}
           </span>
+          {hasMultiplePrices && (
+            <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+              {t('menu.multiple_prices')}
+            </span>
+          )}
         </div>
       </div>
     </div>

@@ -19,6 +19,7 @@ from frappe.utils import cint, flt, get_datetime
 
 from ury.ury.api.ury_kot_generate import _kot_execute
 from ury.ury.doctype.ury_order.ury_order import (
+    _get_locked_waiter_menu,
     _sync_order,
     get_authoritative_item_prices,
     get_authoritative_menu_price_list,
@@ -26,6 +27,7 @@ from ury.ury.doctype.ury_order.ury_order import (
 )
 from ury.ury_pos.api import getRestaurantMenu
 from ury.ury_pos.cashier import POSOpeningError, get_single_cashier_opening
+from ury.ury_pos.price_options import STANDARD_OPTION_ID, get_item_price_options
 from ury.ury_pos.waiter_security import is_dedicated_waiter_user
 
 
@@ -480,9 +482,15 @@ def _format_order(invoice, editable):
                 "rate": flt(item.rate),
                 "amount": flt(item.amount),
                 "comment": item.comment or None,
+                "price_option": item.get("custom_ury_price_option") or None,
+                "price_option_label": item.get("custom_ury_price_option_label") or None,
                 "sent": True,
             }
-            for item in invoice.items
+            # ``frappe._dict`` inherits ``dict``: attribute access to
+            # ``items`` resolves the built-in method instead of the stored
+            # child-table value. ``Document.get`` and mapping ``get`` both
+            # expose the rows consistently.
+            for item in (invoice.get("items") or [])
         ],
     }
 
@@ -527,6 +535,17 @@ def _normalise_expected_rate(value):
     return rate
 
 
+def _normalise_price_option(value):
+    if value is None:
+        return None
+    option_id = str(value).strip()
+    if not option_id:
+        return None
+    if len(option_id) > 140:
+        frappe.throw(_("Each item must include a valid price option."))
+    return option_id
+
+
 def _normalise_pending_items(items):
     if isinstance(items, str):
         try:
@@ -555,7 +574,8 @@ def _normalise_pending_items(items):
         )
         comment = _normalise_text(row.get("comment"), _("Item comment"), 500)
         expected_rate = _normalise_expected_rate(row.get("expected_rate"))
-        key = (item, comment or "", str(expected_rate))
+        price_option = _normalise_price_option(row.get("price_option"))
+        key = (item, price_option or "", comment or "", str(expected_rate))
         if key not in combined:
             combined[key] = {
                 "item": item,
@@ -563,6 +583,8 @@ def _normalise_pending_items(items):
                 "comment": comment,
                 "expected_rate": expected_rate,
             }
+            if price_option:
+                combined[key]["price_option"] = price_option
             order.append(key)
         combined[key]["qty"] += qty
         if combined[key]["qty"] > MAX_ITEM_QTY:
@@ -714,10 +736,37 @@ def _get_authoritative_menu(actor, room, table=None):
     prices = get_authoritative_item_prices(
         [row["item"] for row in enabled_items], price_list
     )
+    physical_availability = {
+        row["item"]: flt(
+            row.get("total_available_qty")
+            if row.get("total_available_qty") is not None
+            else row.get("available_qty")
+        )
+        for row in enabled_items
+    }
+    options_by_item = get_item_price_options(
+        menu.get("name"),
+        prices,
+        physical_availability,
+        item_codes=[row["item"] for row in enabled_items],
+    )
     items = []
     for row in enabled_items:
         authoritative = dict(row)
         authoritative["rate"] = prices[row["item"]]
+        # Never retain the options assembled earlier from the editable menu
+        # row rate. Rebuild them from the authoritative Item Price above.
+        authoritative.pop("price_options", None)
+        price_options = options_by_item.get(row["item"], [])
+        if price_options:
+            authoritative["price_options"] = price_options
+            authoritative["total_available_qty"] = physical_availability[row["item"]]
+            standard_option = next(
+                option
+                for option in price_options
+                if option["id"] == STANDARD_OPTION_ID
+            )
+            authoritative["available_qty"] = standard_option["available_qty"]
         items.append(authoritative)
     return frappe._dict(
         name=menu.get("name"),
@@ -739,7 +788,61 @@ def _hydrate_pending_items(menu, pending_items):
                 ),
                 frappe.PermissionError,
             )
-        authoritative_rate = Decimal(str(menu_item["rate"]))
+        base_rate = Decimal(str(menu_item["rate"]))
+        option_id = row.get("price_option")
+        options = menu_item.get("price_options") or []
+        if options:
+            selected_option_id = option_id or STANDARD_OPTION_ID
+            selected_option = next(
+                (
+                    option
+                    for option in options
+                    if option.get("id") == selected_option_id
+                    and flt(option.get("available_qty")) > 0
+                ),
+                None,
+            )
+            if not selected_option:
+                _conflict(
+                    _(
+                        "The selected price option for item {0} is no longer available. "
+                        "Reload the menu before registering this order."
+                    ).format(frappe.bold(row["item"])),
+                    title=_("Price Option Changed"),
+                )
+            authoritative_rate = Decimal(str(selected_option["rate"]))
+            price_option = selected_option["id"]
+        else:
+            if option_id and option_id != STANDARD_OPTION_ID:
+                _conflict(
+                    _(
+                        "The selected price option for item {0} is no longer valid. "
+                        "Reload the menu before registering this order."
+                    ).format(frappe.bold(row["item"])),
+                    title=_("Price Option Changed"),
+                )
+            authoritative_rate = base_rate
+            price_option = None
+        if options:
+            requested_qty = sum(
+                item["qty"]
+                for item in pending_items
+                if item["item"] == row["item"]
+                and (item.get("price_option") or STANDARD_OPTION_ID)
+                == (option_id or STANDARD_OPTION_ID)
+            )
+            if requested_qty > flt(selected_option["available_qty"]):
+                _conflict(
+                    _(
+                        "Only {0} unit(s) remain for {1} - {2}. "
+                        "Reload the menu before registering this order."
+                    ).format(
+                        flt(selected_option["available_qty"]),
+                        frappe.bold(row["item"]),
+                        frappe.bold(selected_option["label"]),
+                    ),
+                    title=_("Price Option Sold Out"),
+                )
         if row["expected_rate"] != authoritative_rate:
             _conflict(
                 _(
@@ -752,15 +855,17 @@ def _hydrate_pending_items(menu, pending_items):
                 ),
                 title=_("Item Price Changed"),
             )
-        hydrated.append(
-            {
-                "item": menu_item["item"],
-                "item_name": menu_item["item_name"],
-                "qty": row["qty"],
-                "comment": row["comment"],
-                "_authoritative_rate": flt(menu_item["rate"]),
-            }
-        )
+        hydrated_item = {
+            "item": menu_item["item"],
+            "item_name": menu_item["item_name"],
+            "qty": row["qty"],
+            "comment": row["comment"],
+            "_expected_option_rate": flt(authoritative_rate),
+            "_authoritative_base_rate": flt(base_rate),
+        }
+        if row.get("price_option") and price_option:
+            hydrated_item["price_option"] = price_option
+        hydrated.append(hydrated_item)
     return hydrated
 
 
@@ -1006,10 +1111,15 @@ def get_menu(room):
     menu = _get_authoritative_menu(actor, room)
     items = []
     for item in menu.get("items", []):
+        available_qty = flt(
+            item.get("total_available_qty")
+            if item.get("total_available_qty") is not None
+            else item.get("available_qty")
+        )
         available = bool(
             not item.get("is_stock_item")
             or item.get("negative_stock_allowed")
-            or flt(item.get("available_qty")) > 0
+            or available_qty > 0
         )
         items.append(
             {
@@ -1017,11 +1127,12 @@ def get_menu(room):
                 "item_name": item["item_name"],
                 "item_image": item.get("item_image"),
                 "rate": flt(item.get("rate")),
+                "price_options": item.get("price_options") or [],
                 "course": item.get("course"),
                 "course_label": item.get("course_label"),
                 "special_dish": bool(cint(item.get("special_dish"))),
                 "available": available,
-                "available_qty": flt(item.get("available_qty")),
+                "available_qty": available_qty,
                 "is_stock_item": bool(item.get("is_stock_item")),
                 "stock_uom": item.get("stock_uom"),
                 "negative_stock_allowed": bool(
@@ -1131,15 +1242,27 @@ def register_order(
     menu = _get_authoritative_menu(actor, room, table=table)
     pending = _hydrate_pending_items(menu, pending)
     authoritative_prices = {
-        row["item"]: row.pop("_authoritative_rate") for row in pending
+        row["item"]: row["_authoritative_base_rate"] for row in pending
     }
+    sync_items = []
+    for row in pending:
+        sync_item = dict(row)
+        sync_item.pop("_authoritative_base_rate", None)
+        sync_items.append(sync_item)
     routes = _validate_production_routes(
         actor.branch, [row["item"] for row in pending]
     )
-    # Match the global order lock order: opening -> table -> invoice -> stock.
-    # The private save service rechecks the same opening before persisting.
+    # Match the global order lock order: opening -> table -> menu -> invoice ->
+    # Price List/Item Price -> stock. The private save service rechecks the
+    # same locks before persisting.
     _get_opening(actor.profile, required=True, for_update=True)
     table_row = _get_table(actor, table, room, lock=True)
+    _get_locked_waiter_menu(
+        table,
+        room,
+        menu.get("name"),
+        [row["item"] for row in pending],
+    )
     invoices = _active_table_invoices(actor.branch, table, lock=True)
     invoice_row = _select_editable_invoice(
         actor, table_row, room, invoices
@@ -1149,7 +1272,7 @@ def register_order(
     if invoice_row:
         _validate_expected_modified(invoice_row, expected_modified)
         existing_invoice = frappe.get_doc("POS Invoice", invoice_row.name)
-        final_items = pending
+        final_items = sync_items
         customer = existing_invoice.customer
         last_invoice = invoice_row.name
         invoice_name = invoice_row.name
@@ -1160,7 +1283,7 @@ def register_order(
                 _("The referenced order no longer exists. Reload the table."),
                 title=_("Order Changed"),
             )
-        final_items = pending
+        final_items = sync_items
         customer = actor.profile.customer
         last_invoice = None
         invoice_name = None
@@ -1193,6 +1316,7 @@ def register_order(
         strict_invoice=True,
         expected_invoice_name=invoice_name,
         append_only=True,
+        expected_menu=menu.get("name"),
         expected_price_list=menu.get("price_list"),
         expected_item_prices=authoritative_prices,
     )
@@ -1200,11 +1324,15 @@ def register_order(
         _conflict(_("The order could not be saved. Reload the table and retry."))
 
     saved_invoice = frappe.get_doc("POS Invoice", saved["name"])
+    kot_items = [
+        {key: value for key, value in row.items() if not key.startswith("_")}
+        for row in pending
+    ]
     kot_result = _create_waiter_kots(
         saved_invoice.name,
         saved_invoice.customer,
         table,
-        pending,
+        kot_items,
         comments,
     )
     created_kots = _verify_kot_result(kot_result, routes)

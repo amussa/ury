@@ -1,12 +1,12 @@
 import { useEffect, useMemo } from 'react';
-import { usePOSStore } from '../store/pos-store';
+import { MenuItem, usePOSStore } from '../store/pos-store';
 import MenuCard from './MenuCard';
 import { Spinner } from '@ury/ui';
 import { cn } from '@ury/ui';
 import { t } from '../i18n';
 
 interface MenuListProps {
-  onItemClick: (item: any) => void;
+  onItemClick: (item: MenuItem) => void;
 }
 
 const MenuList: React.FC<MenuListProps> = ({ onItemClick }) => {
@@ -68,22 +68,31 @@ const MenuList: React.FC<MenuListProps> = ({ onItemClick }) => {
             "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3",
             isInteractionDisabled && "opacity-50 pointer-events-none"
           )}>
-            {filteredItems.map((item) => (
-              <MenuCard
-                key={item.id}
-                id={item.id}
-                name={item.name}
-                price={item.price}
-                item_image={item.image}
-                course={item.course_label || item.course}
-                item={item.item}
-                onClick={() => onItemClick(item)}
-                available_qty={item.available_qty}
-                is_stock_item={item.is_stock_item}
-                stock_uom={item.stock_uom}
-                disabled={isInteractionDisabled || (item.is_stock_item === true && (item.available_qty ?? 0) <= 0)}
-              />
-            ))}
+            {filteredItems.map((item) => {
+              const physicalAvailable = item.total_available_qty ?? item.available_qty;
+              const hasAvailablePriceOption = !item.price_options?.length
+                || item.price_options.some(option => option.available_qty > 0);
+              const unavailable = item.is_stock_item === true
+                && ((physicalAvailable ?? 0) <= 0 || !hasAvailablePriceOption);
+
+              return (
+                <MenuCard
+                  key={item.id}
+                  id={item.id}
+                  name={item.name}
+                  price={item.price}
+                  item_image={item.image}
+                  course={item.course_label || item.course}
+                  item={item.item}
+                  onClick={() => onItemClick(item)}
+                  available_qty={physicalAvailable}
+                  is_stock_item={item.is_stock_item}
+                  stock_uom={item.stock_uom}
+                  price_options={item.price_options}
+                  disabled={isInteractionDisabled || unavailable}
+                />
+              );
+            })}
           </div>
         )}
       </div>

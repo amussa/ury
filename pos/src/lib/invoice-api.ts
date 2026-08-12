@@ -49,10 +49,13 @@ export interface SplitGroupResponse {
 
 export interface POSInvoiceItem {
   name: string;
+  item_code?: string;
   item_name: string;
   qty: number;
   rate: number;
   amount: number;
+  custom_ury_price_option?: string | null;
+  custom_ury_price_option_label?: string | null;
 }
 
 export interface POSInvoiceTax {
@@ -476,8 +479,8 @@ export async function getLinkedMergeSecondaries(): Promise<string[]> {
     limit: 500,
   } as unknown as Parameters<typeof db.getDocList>[1]);
 
-  return rows
-    .map((row: any) => row.custom_merged_pos_invoice as string | undefined)
+  return (rows as Array<{ custom_merged_pos_invoice?: string | null }>)
+    .map(row => row.custom_merged_pos_invoice || undefined)
     .filter((name): name is string => Boolean(name));
 }
 

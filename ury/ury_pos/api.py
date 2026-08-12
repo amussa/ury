@@ -9,6 +9,7 @@ from frappe import _
 from frappe.utils import cint, flt, validate_phone_number
 
 from ury.ury_pos.cashier import get_single_cashier_opening
+from ury.ury_pos.price_options import get_item_price_options
 
 
 def get_pos_profile_for_current_branch(pos_profile=None):
@@ -103,9 +104,27 @@ def _get_active_product_bundle_codes(item_codes, item_metadata):
     )
 
 
-def _get_bin_qty_map(item_codes, warehouse):
+def _get_bin_qty_map(item_codes, warehouse, for_update=False):
     if not item_codes:
         return {}
+
+    if for_update:
+        rows = frappe.db.sql(
+            """
+            SELECT item_code, actual_qty
+            FROM `tabBin`
+            WHERE warehouse = %(warehouse)s
+              AND item_code IN %(item_codes)s
+            ORDER BY item_code, name
+            FOR UPDATE
+            """,
+            {
+                "warehouse": warehouse,
+                "item_codes": tuple(sorted(item_codes)),
+            },
+            as_dict=True,
+        )
+        return {row.item_code: flt(row.actual_qty) for row in rows}
 
     return {
         row.item_code: flt(row.actual_qty)
@@ -242,7 +261,13 @@ def get_draft_reserved_qty_map(
     )
 
 
-def _get_stock_details(item_codes, warehouse, exclude_invoice=None, item_metadata=None):
+def _get_stock_details(
+    item_codes,
+    warehouse,
+    exclude_invoice=None,
+    item_metadata=None,
+    for_update=False,
+):
     """Return fresh stock for items, including submitted and active draft reservations."""
     if not item_codes:
         return {}
@@ -279,10 +304,17 @@ def _get_stock_details(item_codes, warehouse, exclude_invoice=None, item_metadat
         bundle_components[bundle_code] = (required_by_component, available_by_component)
 
     reservation_codes = physical_item_codes | bundle_codes
-    bin_qty = _get_bin_qty_map(direct_stock_codes, warehouse)
-    submitted_reserved = get_submitted_reserved_qty_map(direct_stock_codes, warehouse)
+    bin_qty = _get_bin_qty_map(
+        direct_stock_codes, warehouse, for_update=for_update
+    )
+    submitted_reserved = get_submitted_reserved_qty_map(
+        direct_stock_codes, warehouse, for_update=for_update
+    )
     draft_reserved = get_draft_reserved_qty_map(
-        reservation_codes, warehouse, exclude_invoice=exclude_invoice
+        reservation_codes,
+        warehouse,
+        exclude_invoice=exclude_invoice,
+        for_update=for_update,
     )
     global_negative_stock = cint(
         frappe.db.get_single_value("Stock Settings", "allow_negative_stock", cache=True)
@@ -368,15 +400,8 @@ def _validate_excluded_invoice(exclude_invoice, profile):
 #     )    
 #     return tables
 
-@frappe.whitelist()
-def getRestaurantMenu(pos_profile, room=None, order_type=None):
-    menu_items = []
-    menu_items_with_image = []
-
+def _get_menu_for_context(pos_profile, branch_name, room=None, order_type=None):
     user_role = frappe.get_roles()
-
-    pos_profile, branch_name = get_pos_profile_for_current_branch(pos_profile)
-
     cashier = any(
         role.role in user_role for role in pos_profile.role_allowed_for_billing
     )
@@ -422,9 +447,45 @@ def getRestaurantMenu(pos_profile, room=None, order_type=None):
     
     if not menu:
         frappe.throw(_("Please set an active menu for Restaurant {0}").format(restaurant))
-    
-    
-    # Get menu items (your existing code)
+    return menu
+
+
+def _attach_price_options(
+    menu,
+    menu_items,
+    stock_details,
+    exclude_invoice=None,
+):
+    item_codes = [item.item for item in menu_items]
+    base_rates = {item.item: flt(item.rate) for item in menu_items}
+    physical = {
+        item_code: flt(stock_details[item_code]["available_qty"])
+        for item_code in item_codes
+    }
+    options_by_item = get_item_price_options(
+        menu,
+        base_rates,
+        physical,
+        item_codes=item_codes,
+        exclude_invoice=exclude_invoice,
+    )
+    for item_code, options in options_by_item.items():
+        stock_details[item_code]["total_available_qty"] = physical[item_code]
+        stock_details[item_code]["available_qty"] = options[0]["available_qty"]
+        stock_details[item_code]["price_options"] = options
+
+
+@frappe.whitelist()
+def getRestaurantMenu(pos_profile, room=None, order_type=None):
+    menu_items_with_image = []
+    pos_profile, branch_name = get_pos_profile_for_current_branch(pos_profile)
+    menu = _get_menu_for_context(
+        pos_profile,
+        branch_name,
+        room=room,
+        order_type=order_type,
+    )
+
     menu_items = frappe.get_all(
         "URY Menu Item",
         filters={"parent": menu, "disabled": 0},
@@ -439,6 +500,7 @@ def getRestaurantMenu(pos_profile, room=None, order_type=None):
         pos_profile.warehouse,
         item_metadata=item_metadata,
     )
+    _attach_price_options(menu, menu_items, stock_details)
     for item in menu_items:
         menu_item = {
             "item": item.item,
@@ -468,22 +530,43 @@ def getStockAvailability(
     item_code=None,
     item_codes=None,
     exclude_invoice=None,
+    room=None,
+    order_type=None,
 ):
     """Return fresh stock for one item or a JSON/list batch in a stable map shape."""
-    profile, _ = get_pos_profile_for_current_branch(pos_profile)
+    profile, _branch = get_pos_profile_for_current_branch(pos_profile)
     _validate_excluded_invoice(exclude_invoice, profile)
 
     requested = _normalise_item_codes(item_code=item_code, item_codes=item_codes)
     if not requested:
         frappe.throw(_("Please provide item_code or item_codes."))
 
-    return {
-        "stocks": _get_stock_details(
-            requested,
-            profile.warehouse,
+    stocks = _get_stock_details(
+        requested,
+        profile.warehouse,
+        exclude_invoice=exclude_invoice,
+    )
+    # Aggregator Price Lists are independent of URY Menu prices. Keep that
+    # established channel on its own prices instead of applying menu quotas.
+    if order_type != "Aggregators":
+        menu = _get_menu_for_context(
+            profile,
+            profile.branch,
+            room=room,
+            order_type=order_type,
+        )
+        menu_items = frappe.get_all(
+            "URY Menu Item",
+            filters={"parent": menu, "disabled": 0, "item": ["in", requested]},
+            fields=["item", "rate"],
+        )
+        _attach_price_options(
+            menu,
+            menu_items,
+            stocks,
             exclude_invoice=exclude_invoice,
         )
-    }
+    return {"stocks": stocks}
 
 @frappe.whitelist()
 def getMenuCourses():
@@ -1156,18 +1239,28 @@ def getPosInvoiceItems(invoice):
     itemDetails = []
     taxDetails = []
     orderdItems = frappe.get_doc("POS Invoice", invoice)
-    posItems = orderdItems.items
+    # ``frappe._dict.items`` is the built-in mapping method, while a Frappe
+    # Document exposes the same child table as an attribute. ``get`` works for
+    # both representations and keeps this formatter easy to exercise safely.
+    posItems = orderdItems.get("items") or []
     for items in posItems:
         itemDetails.append(
             {
                 "name": items.name,
+                "item_code": items.item_code,
                 "item_name": items.item_name,
                 "qty": items.qty,
                 "rate": items.rate,
                 "amount": items.amount,
+                "custom_ury_price_option": items.get(
+                    "custom_ury_price_option"
+                ),
+                "custom_ury_price_option_label": items.get(
+                    "custom_ury_price_option_label"
+                ),
             }
         )
-    taxDetail = orderdItems.taxes
+    taxDetail = orderdItems.get("taxes") or []
     for tax in taxDetail:
         description = tax.description
         rate = tax.tax_amount

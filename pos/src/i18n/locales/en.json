@@ -32,7 +32,8 @@
     "logout": "Logout"
   },
   "menu": {
-    "special_items": "Special Items"
+    "special_items": "Special Items",
+    "multiple_prices": "2 prices"
   },
   "stock": {
     "available": "Stock: {{qty}} {{uom}}",
@@ -60,7 +61,9 @@
     "edit_comment": "Edit comment",
     "addon": "Add-on",
     "stock_total": "Stock: {{qty}} {{uom}}",
-    "stock_remaining": "Remaining: {{qty}} {{uom}}"
+    "stock_remaining": "Remaining: {{qty}} {{uom}}",
+    "price_option": "Price: {{option}}",
+    "price_option_remaining": "{{option}} remaining: {{qty}} {{uom}}"
   },
   "order": {
     "select_to_view": "Select an order to view details",
@@ -149,6 +152,7 @@
     "item_quantity_limit": "{{item}} cannot exceed {{limit}} units per line.",
     "item_out_of_stock": "{{item}} is out of stock and was not added.",
     "insufficient_item_stock": "Only {{available}} {{uom}} of {{item}} is available; {{requested}} was requested in total.",
+    "insufficient_price_option_stock": "Only {{available}} {{uom}} of {{item}} at {{option}} price is available; {{requested}} was requested.",
     "stock_check_failed": "Current stock for {{item}} could not be verified. The cart was not changed; please try again."
   },
   "success": {
@@ -326,7 +330,11 @@
     "total": "Total",
     "update_order": "Update Order",
     "add_to_order": "Add to Order",
-    "checking_stock": "Checking stock..."
+    "checking_stock": "Checking stock...",
+    "price_option": "Choose price",
+    "normal_price": "Normal",
+    "sold_out": "Sold out",
+    "option_available": "{{qty}} {{uom}} available"
   },
   "order_types": {
     "dine_in": "Dine In",

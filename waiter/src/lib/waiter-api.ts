@@ -117,19 +117,30 @@ function normalizeMenuItem(value: unknown): WaiterMenuItem {
   const row = record(value);
   const itemCode = stringValue(row.item_code ?? row.item);
   const category = stringValue(row.category ?? row.item_group ?? row.course, 'Outros');
-  const rawAvailableQty = row.available_qty;
+  const rawAvailableQty = row.total_available_qty ?? row.available_qty;
+  const priceOptions = arrayValue(row.price_options).map((value) => {
+    const option = record(value);
+    return {
+      id: stringValue(option.id),
+      label: stringValue(option.label),
+      rate: Math.max(0, numberValue(option.rate)),
+      available_qty: Math.max(0, numberValue(option.available_qty)),
+      is_default: booleanValue(option.is_default),
+    };
+  }).filter((option) => option.id && option.label);
 
   return {
     item_code: itemCode,
     item_name: stringValue(row.item_name ?? row.name, itemCode),
     description: stringValue(row.description),
     image: nullableString(row.image ?? row.item_image),
-    rate: numberValue(row.rate),
+    rate: Math.max(0, numberValue(row.rate)),
+    price_options: priceOptions,
     category,
     category_label: stringValue(row.category_label ?? row.course_label, category),
     available_qty: rawAvailableQty === null || rawAvailableQty === undefined
       ? null
-      : numberValue(rawAvailableQty),
+      : Math.max(0, numberValue(rawAvailableQty)),
     is_stock_item: row.is_stock_item === undefined ? true : booleanValue(row.is_stock_item),
     negative_stock_allowed: booleanValue(row.negative_stock_allowed),
     stock_uom: nullableString(row.stock_uom),
@@ -169,6 +180,10 @@ function normalizeSentItem(value: unknown): SentOrderItem {
     rate,
     amount: numberValue(row.amount, qty * rate),
     comment: stringValue(row.comment),
+    price_option: nullableString(row.price_option ?? row.custom_ury_price_option),
+    price_option_label: nullableString(
+      row.price_option_label ?? row.custom_ury_price_option_label,
+    ),
   };
 }
 

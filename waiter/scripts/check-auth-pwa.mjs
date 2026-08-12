@@ -6,6 +6,11 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 const app = read('src/App.tsx');
 const login = read('src/components/LoginScreen.tsx');
 const api = read('src/lib/waiter-api.ts');
+const types = read('src/types.ts');
+const menu = read('src/components/MenuView.tsx');
+const editor = read('src/components/ItemEditorSheet.tsx');
+const summary = read('src/components/OrderSummarySheet.tsx');
+const pending = read('src/lib/pending-submission.ts');
 const pwa = read('src/lib/pwa.ts');
 const html = read('index.html');
 
@@ -32,5 +37,20 @@ assert.match(pwa, /register\('\/waiter-service-worker\.js', \{ scope: '\/waiter'
 assert.match(html, /rel="manifest" href="\/waiter-manifest\.webmanifest"/);
 assert.match(html, /rel="apple-touch-icon"/);
 assert.match(html, /id="root" data-session-user="\{\{ session_user \| e \}\}"/);
+
+assert.match(types, /price_options: WaiterPriceOption\[\]/);
+assert.match(types, /price_option: string \| null/);
+assert.match(api, /row\.total_available_qty \?\? row\.available_qty/);
+assert.match(api, /row\.price_option \?\? row\.custom_ury_price_option/);
+assert.match(app, /line\.price_option === \(option\?\.id \?\? null\)/);
+assert.match(app, /maximumQuantity\(item, option\.id\)/);
+assert.match(app, /price_option: line\.price_option/);
+assert.match(menu, /availablePriceOptionsByCode/);
+assert.match(menu, /Escolher preço/);
+assert.match(editor, /Escolha o preço/);
+assert.match(editor, /maximumQuantity\(option\.id\)/);
+assert.match(summary, /line\.price_option_label/);
+assert.match(pending, /row\.price_option/);
+assert.match(pending, /item\.price_option \?\? null/);
 
 console.log('waiter auth/PWA static checks: ok');

@@ -89,7 +89,7 @@ website_route_rules = [
 # ------------
 
 # before_install = "ury.install.before_install"
-# after_install = "ury.install.after_install"
+after_install = "ury.install.after_install"
 
 # Uninstallation
 # ------------
@@ -133,6 +133,7 @@ doc_events = {
         "validate": "ury.ury.hooks.ury_pos_invoice.validate",
         "after_insert":"ury.ury.api.ury_kot_order_number.set_order_number",
         "before_submit": "ury.ury.hooks.ury_pos_invoice.before_submit",
+        "before_cancel": "ury.ury.hooks.ury_pos_invoice.before_cancel",
         "on_submit": "ury.ury.hooks.ury_pos_invoice.on_submit",
         "on_update": "ury.ury.hooks.ury_pos_invoice.on_update",
         "on_cancel": "ury.ury.hooks.ury_pos_invoice.on_trash",
@@ -287,6 +288,8 @@ fixtures = [
                     "POS Invoice-cancel_reason",
                     "POS Invoice Item-comment",
                     "POS Invoice Item-custom_course",
+                    "POS Invoice Item-custom_ury_price_option",
+                    "POS Invoice Item-custom_ury_price_option_label",
                     "POS Invoice-custom_merged_total",
                     "POS Invoice-custom_merged_pos_invoice_details",
                     "POS Invoice-custom_merged_pos_invoice",
@@ -308,6 +311,8 @@ fixtures = [
                     "Sales Invoice-total_spend_time",
                     "Sales Invoice-custom_aggregator_id",
                     "Sales Invoice Item-custom_course",
+                    "Sales Invoice Item-custom_ury_price_option",
+                    "Sales Invoice Item-custom_ury_price_option_label",
                     "POS Profile-restaurant_info",
                     "POS Profile-restaurant",
                     "POS Profile-column_break_c10ag",

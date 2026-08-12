@@ -39,7 +39,8 @@
         "logout": "تسجيل الخروج"
     },
     "menu": {
-        "special_items": "أصناف مميزة"
+        "special_items": "أصناف مميزة",
+        "multiple_prices": "سعران"
     },
     "stock": {
         "available": "المخزون: {{qty}} {{uom}}",
@@ -67,7 +68,9 @@
         "edit_comment": "تعديل التعليق",
         "addon": "إضافة",
         "stock_total": "المخزون: {{qty}} {{uom}}",
-        "stock_remaining": "المتبقي: {{qty}} {{uom}}"
+        "stock_remaining": "المتبقي: {{qty}} {{uom}}",
+        "price_option": "السعر: {{option}}",
+        "price_option_remaining": "المتبقي من {{option}}: {{qty}} {{uom}}"
     },
     "order": {
         "select_to_view": "حدد طلبًا لعرض التفاصيل",
@@ -155,6 +158,7 @@
         "item_quantity_limit": "لا يمكن أن يتجاوز {{item}} عدد {{limit}} وحدة في السطر.",
         "item_out_of_stock": "نفد مخزون {{item}} ولم تتم إضافته.",
         "insufficient_item_stock": "المتاح من {{item}} هو {{available}} {{uom}} فقط؛ والمطلوب إجمالاً {{requested}}.",
+        "insufficient_price_option_stock": "المتاح من {{item}} بسعر {{option}} هو {{available}} {{uom}} فقط؛ والمطلوب {{requested}}.",
         "stock_check_failed": "تعذر التحقق من المخزون الحالي للعنصر {{item}}. لم تتغير العربة؛ يرجى المحاولة مجدداً."
     },
     "success": {
@@ -250,7 +254,11 @@
         "total": "الإجمالي",
         "update_order": "تحديث الطلب",
         "add_to_order": "إضافة إلى الطلب",
-        "checking_stock": "جارٍ التحقق من المخزون..."
+        "checking_stock": "جارٍ التحقق من المخزون...",
+        "price_option": "اختر السعر",
+        "normal_price": "عادي",
+        "sold_out": "نفد",
+        "option_available": "متاح {{qty}} {{uom}}"
     },
     "order_types": {
         "dine_in": "طلب محلي",

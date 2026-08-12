@@ -1,5 +1,27 @@
 import { call } from '@ury/core';
 
+const getServerMessage = (error: unknown): string | null => {
+  if (!error || typeof error !== 'object' || !('_server_messages' in error)) return null;
+  const serverMessages = (error as { _server_messages?: unknown })._server_messages;
+  if (typeof serverMessages !== 'string') return null;
+
+  try {
+    const messages = JSON.parse(serverMessages) as string[];
+    const firstMessage = messages[0] ? JSON.parse(messages[0]) as { message?: string } : null;
+    return firstMessage?.message || null;
+  } catch {
+    return null;
+  }
+};
+
+export interface PriceOption {
+  id: string;
+  label: string;
+  rate: number;
+  available_qty: number;
+  is_default: boolean;
+}
+
 export interface MenuItem {
   item: string;
   item_name: string;
@@ -16,6 +38,8 @@ export interface MenuItem {
   is_stock_item?: boolean;
   stock_uom?: string | null;
   negative_stock_allowed?: boolean;
+  total_available_qty?: number;
+  price_options?: PriceOption[];
 }
 
 export interface GetMenuResponse {
@@ -39,12 +63,9 @@ export const getRestaurantMenu = async (posProfile: string, room: string | null,
       }
     );
     return response.message.items;
-  } catch (error: any) {
-    if (error._server_messages) {
-      const messages = JSON.parse(error._server_messages);
-      const message = JSON.parse(messages[0]);
-      throw new Error(message.message);
-    }
+  } catch (error) {
+    const message = getServerMessage(error);
+    if (message) throw new Error(message);
     throw error;
   }
 };
@@ -59,12 +80,9 @@ export const getAggregatorMenu = async (aggregator: string, posProfile?: string)
       }
     );
     return response.message;
-  } catch (error: any) {
-    if (error._server_messages) {
-      const messages = JSON.parse(error._server_messages);
-      const message = JSON.parse(messages[0]);
-      throw new Error(message.message);
-    }
+  } catch (error) {
+    const message = getServerMessage(error);
+    if (message) throw new Error(message);
     throw error;
   }
 };

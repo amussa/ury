@@ -5,7 +5,7 @@ import Sidebar from '../components/Sidebar';
 import OrderPanel from '../components/OrderPanel';
 import ProductDialog from '../components/ProductDialog';
 import MenuList from '../components/MenuList';
-import { usePOSStore } from '../store/pos-store';
+import { MenuItem, usePOSStore } from '../store/pos-store';
 import { cn } from '@ury/ui';
 import { Spinner } from '@ury/ui';
 import InitialLoader from '../components/InitialLoader';
@@ -27,8 +27,18 @@ export default function POS() {
   const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
   const clickCountRef = useRef(0);
 
-  const handleItemClick = (item: any) => {
+  const handleItemClick = (item: MenuItem) => {
     if (isMenuInteractionDisabled()) return;
+
+    const priceOptions = item.price_options || [];
+    const availablePriceOptions = priceOptions.filter(option => option.available_qty > 0);
+    if (availablePriceOptions.length > 1) {
+      if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+      clickCountRef.current = 0;
+      setSelectedItem(item);
+      setIsDialogOpen(true);
+      return;
+    }
     
     clickCountRef.current += 1;
     
@@ -39,7 +49,11 @@ export default function POS() {
     clickTimerRef.current = setTimeout(async () => {
       if (clickCountRef.current === 1) {
         // Single click - add to cart
-        const result = await addToOrder({ ...item, quantity: 1 });
+        const result = await addToOrder({
+          ...item,
+          quantity: 1,
+          selectedPriceOption: availablePriceOptions[0] || priceOptions[0],
+        });
         showCartMutationError(result);
       } else if (clickCountRef.current === 2) {
         // Double click - open dialog

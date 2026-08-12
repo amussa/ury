@@ -1,11 +1,18 @@
 import frappe
 from datetime import datetime
-from frappe.utils import now_datetime, get_time,now
+from frappe.utils import flt, get_time, now, now_datetime
 from ury.ury.doctype.ury_order.ury_order import release_merge_cluster_tables
 from ury.ury_pos.cashier import (
     POSOpeningError,
     assign_single_cashier_from_opening,
     persist_cashier_owner,
+)
+from ury.ury_pos.price_options import (
+    OPTION_FIELD,
+    OPTION_LABEL_FIELD,
+    STANDARD_OPTION_ID,
+    lock_invoice_price_options,
+    validate_pos_invoice_price_options,
 )
 
 
@@ -20,6 +27,7 @@ def validate(doc, method):
     validate_invoice(doc, method)
     validate_customer(doc, method)
     validate_price_list(doc, method)
+    validate_pos_invoice_price_options(doc)
 
 
 def before_submit(doc, method):
@@ -28,7 +36,17 @@ def before_submit(doc, method):
     ro_reload_submit(doc, method)
 
 
+def before_cancel(doc, method):
+    """Serialize quota release with concurrent price-option reservations."""
+    lock_invoice_price_options(doc)
+
+
 def on_trash(doc, method):
+    # Frappe deletion invokes on_trash before removing child rows. Cancellation
+    # already acquired this lock in before_cancel, so avoid a duplicate query
+    # when this handler is reached through the on_cancel hook.
+    if method == "on_trash":
+        lock_invoice_price_options(doc)
     table_status_delete(doc, method)
 
 
@@ -43,15 +61,12 @@ def validate_invoice(doc, method):
         # Get the original items from db
         original_doc = frappe.get_doc("POS Invoice", doc.name)
         
-        # Create dictionaries to store both quantities and names
-        original_items = {
-            item.item_code: {"qty": item.qty, "name": item.item_name} 
-            for item in original_doc.items
-        }
-        current_items = {
-            item.item_code: {"qty": item.qty, "name": item.item_name} 
-            for item in doc.items
-        }
+        # Aggregate by item and commercial price option. Two physical lines for
+        # Normal and Promotion must never overwrite one another in a dict.
+        original_items = _aggregate_invoice_items(
+            original_doc.get("items") or []
+        )
+        current_items = _aggregate_invoice_items(doc.get("items") or [])
           
         # Check for removed items
         removed_items = set(original_items.keys()) - set(current_items.keys())
@@ -62,17 +77,14 @@ def validate_invoice(doc, method):
             if (item_code in current_items and 
                 current_items[item_code]["qty"] < item_data["qty"]):
                 reduced_qty_items.append(
-                    f"{item_data['name']} (qty reduced from {item_data['qty']} "
+                    f"{item_data['display_name']} (qty reduced from {item_data['qty']} "
                     f"to {current_items[item_code]['qty']})"
                 )
         
         if removed_items or reduced_qty_items:
             error_msg = []
             if removed_items:
-                removed_item_names = [
-                    original_items[item_code]["name"] 
-                    for item_code in removed_items
-                ]
+                removed_item_names = [original_items[key]["display_name"] for key in removed_items]
                 error_msg.append(f"Removed items: {', '.join(removed_item_names)}")
             if reduced_qty_items:
                 error_msg.append(f"Modified quantities: {', '.join(reduced_qty_items)}")
@@ -81,6 +93,25 @@ def validate_invoice(doc, method):
                 ("Cannot modify items after invoice is printed.\n{0}")
                 .format("\n".join(error_msg))
             )
+
+
+def _aggregate_invoice_items(items):
+    aggregated = {}
+    for item in items:
+        option_id = item.get(OPTION_FIELD) or STANDARD_OPTION_ID
+        key = (item.item_code, option_id)
+        if key not in aggregated:
+            option_label = item.get(OPTION_LABEL_FIELD)
+            display_name = item.item_name
+            if option_label:
+                display_name = f"{display_name} - {option_label}"
+            aggregated[key] = {
+                "qty": 0,
+                "name": item.item_name,
+                "display_name": display_name,
+            }
+        aggregated[key]["qty"] = flt(aggregated[key]["qty"]) + flt(item.qty)
+    return aggregated
 
 
 def validate_customer(doc, method):

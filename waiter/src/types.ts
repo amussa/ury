@@ -47,12 +47,21 @@ export interface MenuCategory {
   label: string;
 }
 
+export interface WaiterPriceOption {
+  id: string;
+  label: string;
+  rate: number;
+  available_qty: number;
+  is_default: boolean;
+}
+
 export interface WaiterMenuItem {
   item_code: string;
   item_name: string;
   description: string;
   image: string | null;
   rate: number;
+  price_options: WaiterPriceOption[];
   category: string;
   category_label: string;
   available_qty: number | null;
@@ -74,6 +83,8 @@ export interface SentOrderItem {
   rate: number;
   amount: number;
   comment: string;
+  price_option: string | null;
+  price_option_label: string | null;
 }
 
 export interface TableOrder {
@@ -92,6 +103,8 @@ export interface DraftOrderItem {
   item_name: string;
   qty: number;
   rate: number;
+  price_option: string | null;
+  price_option_label: string | null;
   comment: string;
   available_qty: number | null;
   is_stock_item: boolean;
@@ -103,6 +116,7 @@ export interface RegisterOrderItem {
   item_code: string;
   qty: number;
   expected_rate: number;
+  price_option?: string;
   comment?: string;
 }
 

@@ -13,6 +13,8 @@ export interface POSInvoiceItem {
   amount: number;
   discount_percentage: number;
   discount_amount: number;
+  custom_ury_price_option?: string | null;
+  custom_ury_price_option_label?: string | null;
 }
 
 export interface POSInvoice {
@@ -72,6 +74,7 @@ export interface SyncOrderRequest {
     rate: number;
     qty: number;
     comment?: string;
+    price_option?: string;
   }>;
   no_of_pax: number;
   mode_of_payment?: string;

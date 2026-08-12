@@ -17,6 +17,20 @@ import { DINE_IN } from '../data/order-types';
 import { t } from '../i18n';
 import { showCartMutationError } from '../lib/cart-feedback';
 
+const getServerErrorMessage = (error: unknown): string | null => {
+  if (!error || typeof error !== 'object' || !('_server_messages' in error)) return null;
+  const serverMessages = (error as { _server_messages?: unknown })._server_messages;
+  if (typeof serverMessages !== 'string') return null;
+
+  try {
+    const messages = JSON.parse(serverMessages) as string[];
+    const firstMessage = messages[0] ? JSON.parse(messages[0]) as { message?: string } : null;
+    return firstMessage?.message || null;
+  } catch {
+    return null;
+  }
+};
+
 const OrderPanel = () => {
   const { 
     activeOrders, 
@@ -50,7 +64,7 @@ const OrderPanel = () => {
   const [adjustingItemKeys, setAdjustingItemKeys] = useState(new Set<string>());
 
   const calculateItemTotal = (item: typeof activeOrders[0]) => {
-    const basePrice = item.selectedVariant?.price || item.price;
+    const basePrice = item.selectedPriceOption?.rate ?? item.selectedVariant?.price ?? item.price;
     const addonsTotal = item.selectedAddons?.reduce((sum, addon) => sum + addon.price, 0) || 0;
     return (basePrice + addonsTotal) * item.quantity;
   };
@@ -174,9 +188,10 @@ const OrderPanel = () => {
         items: activeOrders.map(item => ({
           item: item.id,
           item_name: item.name,
-          rate: item.selectedVariant?.price || item.price,
+          rate: item.selectedPriceOption?.rate ?? item.selectedVariant?.price ?? item.price,
           qty: item.quantity,
-          comment: item.comment || undefined
+          comment: item.comment || undefined,
+          price_option: item.selectedPriceOption?.id,
         })),
         no_of_pax: 1,
         pos_profile: posProfile.name,
@@ -201,15 +216,9 @@ const OrderPanel = () => {
       showToast.success(isUpdatingOrder ? t('success.order_updated') : t('success.order_created'));
     } catch (error) {
       console.error('Failed to sync order:', error);
-      // Frappe API error handling
-      if (error && typeof error === 'object' && '_server_messages' in error && typeof (error as any)._server_messages === 'string') {
-        try {
-          const messages = JSON.parse((error as any)._server_messages);
-          const messageObj = JSON.parse(messages[0]);
-          showToast.error(messageObj.message || 'API error');
-        } catch {
-          showToast.error('API error');
-        }
+      const serverMessage = getServerErrorMessage(error);
+      if (serverMessage) {
+        showToast.error(serverMessage);
       } else if (error instanceof Error) {
         showToast.error(error.message);
       } else {
@@ -270,11 +279,29 @@ const OrderPanel = () => {
             {activeOrders.map((item) => {
               const stock = stockByItem[item.item];
               const isStockItem = stock?.is_stock_item ?? item.is_stock_item;
-              const availableQuantity = stock?.available_qty ?? item.available_qty;
+              const availableQuantity = stock?.total_available_qty
+                ?? item.total_available_qty
+                ?? stock?.available_qty
+                ?? item.available_qty;
               const stockUom = stock?.stock_uom ?? item.stock_uom ?? '';
               const quantityInCart = getItemQuantityByCode(item.item);
               const remainingQuantity = typeof availableQuantity === 'number'
                 ? Math.max(0, availableQuantity - quantityInCart)
+                : null;
+              const selectedOptionStock = stock?.price_options?.find(
+                option => option.id === item.selectedPriceOption?.id,
+              ) || item.selectedPriceOption;
+              const quantityInSelectedOption = item.selectedPriceOption
+                ? activeOrders.reduce(
+                    (sum, candidate) => candidate.item === item.item
+                      && candidate.selectedPriceOption?.id === item.selectedPriceOption?.id
+                      ? sum + candidate.quantity
+                      : sum,
+                    0,
+                  )
+                : 0;
+              const selectedOptionRemaining = selectedOptionStock
+                ? Math.max(0, selectedOptionStock.available_qty - quantityInSelectedOption)
                 : null;
               const configurationItems = getConfigurationItems(item);
               const incrementCounts = configurationItems.reduce<Record<string, number>>((counts, orderItem) => {
@@ -283,8 +310,24 @@ const OrderPanel = () => {
               }, {});
               const incrementExceedsStock = Object.entries(incrementCounts).some(([itemCode, increment]) => {
                 const itemStock = stockByItem[itemCode];
+                const physicalAvailable = itemStock?.total_available_qty ?? itemStock?.available_qty;
                 return itemStock?.is_stock_item === true
-                  && getItemQuantityByCode(itemCode) + increment > itemStock.available_qty + Number.EPSILON;
+                  && getItemQuantityByCode(itemCode) + increment > (physicalAvailable ?? 0) + Number.EPSILON;
+              });
+              const incrementExceedsPriceOption = configurationItems.some((orderItem) => {
+                const optionId = orderItem.selectedPriceOption?.id;
+                if (!optionId) return false;
+                const itemStock = stockByItem[orderItem.item];
+                const option = itemStock?.price_options?.find(candidate => candidate.id === optionId);
+                if (!option) return true;
+                const quantityInOption = activeOrders.reduce(
+                  (sum, candidate) => candidate.item === orderItem.item
+                    && candidate.selectedPriceOption?.id === optionId
+                    ? sum + candidate.quantity
+                    : sum,
+                  0,
+                );
+                return quantityInOption + 1 > option.available_qty + Number.EPSILON;
               });
               const isConfigurationAddon = item.configurationRole === 'addon';
               const isAdjusting = adjustingItemKeys.has(item.configurationId || item.uniqueId!);
@@ -306,6 +349,13 @@ const OrderPanel = () => {
                     {item.selectedVariant && (
                       <p className="text-sm text-gray-600">{item.selectedVariant.name}</p>
                     )}
+                    {item.selectedPriceOption && (
+                      <p className="text-xs font-medium text-blue-700">
+                        {t('cart.price_option', { option: item.selectedPriceOption.label })}
+                        {' · '}
+                        {formatCurrency(item.selectedPriceOption.rate)}
+                      </p>
+                    )}
                     {item.configurationRole === 'addon' && (
                       <p className="text-xs font-medium text-blue-600">
                         {t('cart.addon')} · × {item.quantity}
@@ -318,11 +368,22 @@ const OrderPanel = () => {
                     )}
                     <p className="text-gray-600 text-sm">{formatCurrency(calculateItemTotal(item))}</p>
                     {isStockItem === true && typeof availableQuantity === 'number' ? (
-                      <p className="mt-1 text-xs text-gray-500">
-                        {t('cart.stock_total', { qty: availableQuantity, uom: stockUom })}
-                        {' · '}
-                        {t('cart.stock_remaining', { qty: remainingQuantity ?? 0, uom: stockUom })}
-                      </p>
+                      <>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {t('cart.stock_total', { qty: availableQuantity, uom: stockUom })}
+                          {' · '}
+                          {t('cart.stock_remaining', { qty: remainingQuantity ?? 0, uom: stockUom })}
+                        </p>
+                        {selectedOptionStock && selectedOptionRemaining !== null && (
+                          <p className="text-xs text-blue-600">
+                            {t('cart.price_option_remaining', {
+                              option: selectedOptionStock.label,
+                              qty: selectedOptionRemaining,
+                              uom: stockUom,
+                            })}
+                          </p>
+                        )}
+                      </>
                     ) : isStockItem === false ? (
                       <p className="mt-1 text-xs text-gray-500">{t('stock.not_tracked')}</p>
                     ) : null}
@@ -358,7 +419,13 @@ const OrderPanel = () => {
                         variant="outline"
                         size="icon"
                         className="w-8 h-8 rounded-full"
-                        disabled={isInteractionDisabled || isAdjusting || item.quantity >= 99 || incrementExceedsStock}
+                        disabled={
+                          isInteractionDisabled
+                          || isAdjusting
+                          || item.quantity >= 99
+                          || incrementExceedsStock
+                          || incrementExceedsPriceOption
+                        }
                       >
                         +
                       </Button>
@@ -448,6 +515,7 @@ const OrderPanel = () => {
           initialAddons={editingItem.configuredAddons || editingItem.selectedAddons}
           initialQuantity={editingItem.quantity}
           itemToReplace={editingItem}
+          initialPriceOption={editingItem.selectedPriceOption}
         />
       )}
 

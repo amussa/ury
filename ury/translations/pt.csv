@@ -17,3 +17,40 @@ URY Cost of Goods,Custo das Mercadorias
 Show Item Image In URY Pos,Mostrar foto do produto no POS Vendas
 URY pos restrictions,Restrições do POS Vendas
 Enable discount feature in URY POS,Activar descontos no POS Vendas
+Normal,Normal
+Promotion,Promoção
+Option,Opção
+Rate,Preço
+Promotional Quantity,Quantidade promocional
+Promotional Price Options,Preços promocionais
+Price Option,Opção de preço
+"Optional. Reserve a limited quantity of selected items for a promotional selling price. Normal stock is calculated automatically.","Opcional. Reserve uma quantidade limitada de artigos selecionados para venda a preço promocional. O stock ao preço normal é calculado automaticamente."
+"Price option {0} refers to an item that is not enabled in this menu.","A opção de preço {0} refere-se a um artigo que não está ativo neste menu."
+"Item {0} can have only one active promotional price.","O artigo {0} só pode ter um preço promocional ativo."
+"Promotional quantities require a stock item: {0}.","As quantidades promocionais exigem um artigo de stock: {0}."
+"Serialised or batched items are not supported by promotional quantities: {0}.","Artigos serializados ou com lote não são suportados nas quantidades promocionais: {0}."
+"Promotional quantity for {0} must be greater than zero.","A quantidade promocional de {0} deve ser maior que zero."
+"Promotional price for {0} must be lower than its normal price.","O preço promocional de {0} deve ser inferior ao preço normal."
+Every promotional price must have a label.,Cada preço promocional deve ter uma designação.
+"The item of saved price option {0} cannot be changed. Remove it and add a new option instead.","O artigo da opção de preço gravada {0} não pode ser alterado. Remova-a e crie uma nova opção."
+"Finish or cancel open order {0} before changing its promotional price option.","Conclua ou cancele o pedido aberto {0} antes de alterar a respetiva opção de preço promocional."
+"Finish or cancel open order {0} before deleting this menu.","Conclua ou cancele o pedido aberto {0} antes de eliminar este menu."
+"Menu {0} no longer exists. Reload and retry.","O menu {0} já não existe. Atualize e tente novamente."
+"Item {0} has more than one active promotion.","O artigo {0} tem mais de uma promoção ativa."
+"The normal price is missing for promoted item {0}.","Falta o preço normal do artigo promocional {0}."
+"The selected price option is not valid for item {0}.","A opção de preço selecionada não é válida para o artigo {0}."
+"Promotional price for {0} is no longer lower than its normal price. Update the menu before selling this item.","O preço promocional de {0} já não é inferior ao preço normal. Atualize o menu antes de vender este artigo."
+Invalid Promotional Price,Preço promocional inválido
+"The selected price option for {0} is no longer valid. Reload the menu.","A opção de preço selecionada para {0} já não é válida. Atualize o menu."
+"Only {0} unit(s) remain for {1} - {2}; {3} were requested.","Restam apenas {0} unidade(s) de {1} - {2}; foram solicitadas {3}."
+Price Option Sold Out,Opção de preço esgotada
+"Price option changed while validating: {0}. Reload the menu.","A opção de preço mudou durante a validação: {0}. Atualize o menu."
+Price Option Changed,Opção de preço alterada
+A warehouse is required to validate promotional quantities.,É necessário um armazém para validar as quantidades promocionais.
+Missing Warehouse,Armazém em falta
+A promotional return must reference its original POS Invoice.,Uma devolução promocional deve referenciar a fatura POS original.
+Invalid Promotional Return,Devolução promocional inválida
+"Promotional return does not match the original price option: {0}.","A devolução promocional não corresponde à opção de preço original: {0}."
+Promotional price options require a Price List linked to a URY Menu.,As opções de preço promocional exigem uma Lista de Preços ligada a um Menu URY.
+Invalid Price Option,Opção de preço inválida
+"Price option label is invalid for: {0}. Reload the menu.","A designação da opção de preço é inválida para: {0}. Atualize o menu."

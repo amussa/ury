@@ -13,7 +13,9 @@
   "column_break_3",
   "price_list",
   "items_section",
-  "items"
+  "items",
+  "price_options_section",
+  "price_options"
  ],
  "fields": [
   {
@@ -46,6 +48,18 @@
    "label": "Items",
    "options": "URY Menu Item",
    "reqd": 1
+  },
+  {
+   "description": "Optional. Reserve a limited quantity of selected items for a promotional selling price. Normal stock is calculated automatically.",
+   "fieldname": "price_options_section",
+   "fieldtype": "Section Break",
+   "label": "Promotional Price Options"
+  },
+  {
+   "fieldname": "price_options",
+   "fieldtype": "Table",
+   "label": "Promotional Price Options",
+   "options": "URY Menu Price Option"
   },
   {
    "fieldname": "branch",

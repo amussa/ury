@@ -15,6 +15,9 @@ from ury.ury.doctype.ury_kot.ury_kot import URYKOT
 from ury.ury.doctype.ury_order.ury_order import (
     _append_server_priced_order_items,
     _assert_existing_order_items_unchanged,
+    _get_locked_waiter_menu,
+    _get_locked_waiter_item_prices,
+    _get_locked_waiter_price_list,
     _snapshot_existing_order_items,
     _sync_order,
     sync_order,
@@ -25,6 +28,7 @@ from ury.ury_pos.waiter_api import (
     WaiterRequestInProgressError,
     _active_table_invoices,
     _create_waiter_kots,
+    _format_order,
     _get_authoritative_menu,
     _get_exact_pos_profile,
     _hydrate_pending_items,
@@ -132,6 +136,298 @@ class FakeSyncInvoice:
 
 
 class TestWaiterAPI(TestCase):
+    def test_waiter_rejects_menu_changed_after_table_lock(self):
+        current_rows = [
+            [
+                frappe._dict(
+                    name="Table 1",
+                    restaurant="Restaurant A",
+                    restaurant_room="Room A",
+                )
+            ],
+            [
+                frappe._dict(
+                    name="Restaurant A",
+                    active_menu="NEW-MENU",
+                    room_wise_menu=0,
+                )
+            ],
+        ]
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.db.sql",
+            side_effect=current_rows,
+        ) as sql, patch(
+            "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent"
+        ) as lock_menu, patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_menu(
+                    "Table 1",
+                    "Room A",
+                    "OLD-MENU",
+                    ["ITEM-A"],
+                )
+
+        self.assertEqual(sql.call_count, 2)
+        self.assertTrue(
+            all("FOR UPDATE" in call.args[0] for call in sql.call_args_list)
+        )
+        lock_menu.assert_not_called()
+
+    def test_waiter_rejects_item_disabled_after_menu_lock(self):
+        events = []
+
+        def current_rows(query, _values, as_dict=False):
+            self.assertTrue(as_dict)
+            events.append(
+                next(
+                    table
+                    for table in (
+                        "tabURY Table",
+                        "tabURY Restaurant",
+                        "tabURY Menu Item",
+                    )
+                    if table in query
+                )
+            )
+            if "tabURY Table" in query:
+                return [
+                    frappe._dict(
+                        name="Table 1",
+                        restaurant="Restaurant A",
+                        restaurant_room="Room A",
+                    )
+                ]
+            if "tabURY Restaurant" in query:
+                return [
+                    frappe._dict(
+                        name="Restaurant A",
+                        active_menu="ROOM-MENU",
+                        room_wise_menu=0,
+                    )
+                ]
+            return [
+                frappe._dict(
+                    name="MENU-ITEM-1",
+                    item="ITEM-A",
+                    disabled=1,
+                )
+            ]
+
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.db.sql",
+            side_effect=current_rows,
+        ), patch(
+            "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent",
+            side_effect=lambda _menu: events.append("tabURY Menu"),
+        ) as lock_menu, patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_menu(
+                    "Table 1",
+                    "Room A",
+                    "ROOM-MENU",
+                    ["ITEM-A"],
+                )
+
+        lock_menu.assert_called_once_with("ROOM-MENU")
+        self.assertEqual(
+            events,
+            [
+                "tabURY Table",
+                "tabURY Restaurant",
+                "tabURY Menu",
+                "tabURY Menu Item",
+            ],
+        )
+
+    def test_waiter_rejects_globally_disabled_item_after_menu_lock(self):
+        current_rows = [
+            [
+                frappe._dict(
+                    name="Table 1",
+                    restaurant="Restaurant A",
+                    restaurant_room="Room A",
+                )
+            ],
+            [
+                frappe._dict(
+                    name="Restaurant A",
+                    active_menu="ROOM-MENU",
+                    room_wise_menu=0,
+                )
+            ],
+            [
+                frappe._dict(
+                    name="MENU-ITEM-1",
+                    item="ITEM-A",
+                    disabled=0,
+                )
+            ],
+            [frappe._dict(name="ITEM-A", disabled=1)],
+        ]
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.db.sql",
+            side_effect=current_rows,
+        ) as sql, patch(
+            "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent"
+        ) as lock_menu, patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_menu(
+                    "Table 1",
+                    "Room A",
+                    "ROOM-MENU",
+                    ["ITEM-A"],
+                )
+
+        self.assertEqual(sql.call_count, 4)
+        self.assertTrue(
+            all("FOR UPDATE" in call.args[0] for call in sql.call_args_list)
+        )
+        lock_menu.assert_called_once_with("ROOM-MENU")
+
+    def test_waiter_rejects_disabled_or_rebound_price_list_under_lock(self):
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.db.sql",
+            return_value=[
+                frappe._dict(
+                    name="ROOM-PRICE-LIST",
+                    enabled=0,
+                    selling=1,
+                    restaurant_menu="OTHER-MENU",
+                )
+            ],
+        ) as sql, patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_price_list(
+                    "ROOM-MENU",
+                    "ROOM-PRICE-LIST",
+                )
+
+        sql.assert_called_once()
+        self.assertIn("FOR UPDATE", sql.call_args.args[0])
+
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.get_authoritative_item_prices",
+        return_value={"ITEM-A": 180},
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order._get_locked_waiter_price_list"
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent"
+    )
+    def test_waiter_rejects_price_snapshot_changed_before_menu_lock(
+        self,
+        lock_menu_parent,
+        lock_price_list,
+        get_current_prices,
+    ):
+        events = []
+        lock_menu_parent.side_effect = lambda _menu: events.append("parent")
+        get_current_prices.side_effect = lambda *_args, **_kwargs: (
+            events.append("prices") or {"ITEM-A": 180}
+        )
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_item_prices(
+                    "ROOM-MENU",
+                    ["ITEM-A"],
+                    "ROOM-PRICE-LIST",
+                    {"ITEM-A": 170},
+                )
+
+        lock_menu_parent.assert_called_once_with("ROOM-MENU")
+        lock_price_list.assert_called_once_with(
+            "ROOM-MENU", "ROOM-PRICE-LIST"
+        )
+        get_current_prices.assert_called_once_with(
+            ["ITEM-A"], "ROOM-PRICE-LIST", for_update=True
+        )
+        self.assertEqual(events, ["parent", "prices"])
+
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.get_authoritative_item_prices",
+        return_value={},
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order._get_locked_waiter_price_list"
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent"
+    )
+    def test_waiter_reports_missing_current_price_as_conflict(
+        self,
+        lock_menu_parent,
+        lock_price_list,
+        _get_current_prices,
+    ):
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_item_prices(
+                    "ROOM-MENU",
+                    ["ITEM-A"],
+                    "ROOM-PRICE-LIST",
+                    {"ITEM-A": 170},
+                )
+
+        lock_menu_parent.assert_called_once_with("ROOM-MENU")
+        lock_price_list.assert_called_once_with(
+            "ROOM-MENU", "ROOM-PRICE-LIST"
+        )
+        _get_current_prices.assert_called_once_with(
+            ["ITEM-A"], "ROOM-PRICE-LIST", for_update=True
+        )
+
+    def test_formatted_order_preserves_price_option_snapshot(self):
+        invoice = frappe._dict(
+            name="POS-INV-1",
+            modified=datetime(2026, 8, 12, 10, 0, 0),
+            restaurant_table="Table 1",
+            custom_restaurant_room="Room A",
+            waiter=frappe.session.user,
+            no_of_pax=1,
+            custom_comments=None,
+            grand_total=80,
+            items=[
+                frappe._dict(
+                    name="ROW-1",
+                    item_code="CAKE-SLICE",
+                    item_name="Cake Slice",
+                    qty=1,
+                    uom="Nos",
+                    rate=80,
+                    amount=80,
+                    comment=None,
+                    custom_ury_price_option="PROMO-1",
+                    custom_ury_price_option_label="Promotion",
+                )
+            ],
+        )
+
+        formatted = _format_order(invoice, editable=True)
+
+        self.assertEqual(formatted["items"][0]["price_option"], "PROMO-1")
+        self.assertEqual(
+            formatted["items"][0]["price_option_label"], "Promotion"
+        )
+
     def test_pending_items_are_integer_positive_and_preserve_distinct_comments(self):
         items = _normalise_pending_items(
             [
@@ -167,7 +463,8 @@ class TestWaiterAPI(TestCase):
             [{"item": "ITEM-A", "qty": 1, "expected_rate": 170}]
         )
         hydrated = _hydrate_pending_items(menu, pending)
-        self.assertEqual(hydrated[0]["_authoritative_rate"], 170)
+        self.assertEqual(hydrated[0]["_authoritative_base_rate"], 170)
+        self.assertEqual(hydrated[0]["_expected_option_rate"], 170)
 
         stale = _normalise_pending_items(
             [{"item": "ITEM-A", "qty": 1, "expected_rate": 150}]
@@ -177,6 +474,103 @@ class TestWaiterAPI(TestCase):
         ):
             with self.assertRaises(WaiterConflictError):
                 _hydrate_pending_items(menu, stale)
+
+    def test_pending_promotion_is_distinct_and_validated_by_option_rate(self):
+        menu = frappe._dict(
+            items=[
+                {
+                    "item": "ITEM-A",
+                    "item_name": "Item A",
+                    "rate": 170,
+                    "price_options": [
+                        {
+                            "id": "standard",
+                            "label": "Normal",
+                            "rate": 170,
+                            "available_qty": 6,
+                        },
+                        {
+                            "id": "PROMO-1",
+                            "label": "Promoção",
+                            "rate": 120,
+                            "available_qty": 4,
+                        },
+                    ],
+                }
+            ]
+        )
+        pending = _normalise_pending_items(
+            [
+                {
+                    "item": "ITEM-A",
+                    "qty": 2,
+                    "expected_rate": 170,
+                    "price_option": "standard",
+                },
+                {
+                    "item": "ITEM-A",
+                    "qty": 4,
+                    "expected_rate": 120,
+                    "price_option": "PROMO-1",
+                },
+            ]
+        )
+
+        hydrated = _hydrate_pending_items(menu, pending)
+
+        self.assertEqual([row["price_option"] for row in hydrated], [
+            "standard", "PROMO-1",
+        ])
+        self.assertEqual(
+            [row["_authoritative_base_rate"] for row in hydrated],
+            [170, 170],
+        )
+        self.assertEqual(
+            [row["_expected_option_rate"] for row in hydrated],
+            [170, 120],
+        )
+
+        stale = _normalise_pending_items(
+            [{
+                "item": "ITEM-A",
+                "qty": 1,
+                "expected_rate": 110,
+                "price_option": "PROMO-1",
+            }]
+        )
+        with patch(
+            "ury.ury_pos.waiter_api.frappe.throw", side_effect=raise_frappe
+        ):
+            with self.assertRaises(WaiterConflictError):
+                _hydrate_pending_items(menu, stale)
+
+    def test_pending_promotion_rejects_quantity_above_option_partition(self):
+        menu = frappe._dict(
+            items=[{
+                "item": "ITEM-A",
+                "item_name": "Item A",
+                "rate": 170,
+                "price_options": [{
+                    "id": "PROMO-1",
+                    "label": "Promoção",
+                    "rate": 120,
+                    "available_qty": 1,
+                }],
+            }]
+        )
+        pending = _normalise_pending_items(
+            [{
+                "item": "ITEM-A",
+                "qty": 2,
+                "expected_rate": 120,
+                "price_option": "PROMO-1",
+            }]
+        )
+        with patch(
+            "ury.ury_pos.waiter_api.frappe.throw", side_effect=raise_frappe
+        ):
+            with self.assertRaises(WaiterConflictError):
+                _hydrate_pending_items(menu, pending)
 
     @patch("ury.ury_pos.waiter_api.frappe.db.sql", return_value=[])
     def test_active_invoice_query_uses_exact_csv_membership_and_lock(self, db_sql):
@@ -436,6 +830,7 @@ class TestWaiterAPI(TestCase):
 
         get_doc.assert_not_called()
 
+    @patch("ury.ury_pos.waiter_api.get_item_price_options", return_value={})
     @patch("ury.ury_pos.waiter_api.get_authoritative_item_prices")
     @patch("ury.ury_pos.waiter_api.get_authoritative_menu_price_list")
     @patch("ury.ury_pos.waiter_api.get_restaurant_and_menu_name")
@@ -448,6 +843,7 @@ class TestWaiterAPI(TestCase):
         get_table_menu,
         get_price_list,
         get_prices,
+        get_price_options,
     ):
         get_restaurant_menu.return_value = {
             "name": "ROOM-MENU",
@@ -498,14 +894,200 @@ class TestWaiterAPI(TestCase):
         get_prices.assert_called_once_with(
             ["ITEM-A"], "ROOM-PRICE-LIST"
         )
+        get_price_options.assert_called_once_with(
+            "ROOM-MENU",
+            {"ITEM-A": 170},
+            {"ITEM-A": 0},
+            item_codes=["ITEM-A"],
+        )
 
+    @patch("ury.ury_pos.waiter_api.get_item_price_options")
+    @patch(
+        "ury.ury_pos.waiter_api.get_authoritative_item_prices",
+        return_value={"ITEM-A": 170},
+    )
+    @patch(
+        "ury.ury_pos.waiter_api.get_authoritative_menu_price_list",
+        return_value="ROOM-PRICE-LIST",
+    )
+    @patch("ury.ury_pos.waiter_api.frappe.get_all")
+    @patch("ury.ury_pos.waiter_api.getRestaurantMenu")
+    def test_authoritative_menu_rebuilds_options_from_item_price_and_total_stock(
+        self,
+        get_restaurant_menu,
+        get_all,
+        _get_price_list,
+        _get_prices,
+        get_price_options,
+    ):
+        get_restaurant_menu.return_value = {
+            "name": "ROOM-MENU",
+            "modified_time": "2026-08-12 12:00:00",
+            "items": [{
+                "item": "ITEM-A",
+                "item_name": "Item A",
+                "rate": 100,
+                "available_qty": 6,
+                "total_available_qty": 10,
+                "price_options": [{
+                    "id": "STALE-PROMO",
+                    "rate": 1,
+                    "available_qty": 99,
+                }],
+            }],
+        }
+        get_all.return_value = [frappe._dict(name="ITEM-A", disabled=0)]
+        rebuilt = [
+            {
+                "id": "standard",
+                "label": "Normal",
+                "rate": 170,
+                "available_qty": 6,
+                "is_default": True,
+            },
+            {
+                "id": "PROMO-1",
+                "label": "Promoção",
+                "rate": 120,
+                "available_qty": 4,
+                "is_default": False,
+            },
+        ]
+        get_price_options.return_value = {"ITEM-A": rebuilt}
+
+        menu = _get_authoritative_menu(actor_context(), "Room A")
+
+        authoritative_item = menu.get("items")[0]
+        self.assertEqual(authoritative_item["rate"], 170)
+        self.assertEqual(authoritative_item["price_options"], rebuilt)
+        self.assertEqual(authoritative_item["available_qty"], 6)
+        self.assertEqual(authoritative_item["total_available_qty"], 10)
+        get_price_options.assert_called_once_with(
+            "ROOM-MENU",
+            {"ITEM-A": 170},
+            {"ITEM-A": 10},
+            item_codes=["ITEM-A"],
+        )
+
+    @patch("ury.ury_pos.waiter_api._get_authoritative_menu")
+    @patch("ury.ury_pos.waiter_api._resolve_room", return_value="Room A")
+    @patch("ury.ury_pos.waiter_api._get_actor_context")
+    def test_waiter_menu_uses_total_availability_when_only_promotion_remains(
+        self,
+        get_actor,
+        _resolve_room,
+        get_authoritative_menu,
+    ):
+        get_actor.return_value = actor_context()
+        get_authoritative_menu.return_value = frappe._dict(
+            name="ROOM-MENU",
+            modified_time="2026-08-12 12:00:00",
+            items=[{
+                "item": "ITEM-A",
+                "item_name": "Item A",
+                "rate": 170,
+                "price_options": [
+                    {
+                        "id": "standard",
+                        "label": "Normal",
+                        "rate": 170,
+                        "available_qty": 0,
+                        "is_default": True,
+                    },
+                    {
+                        "id": "PROMO-1",
+                        "label": "Promoção",
+                        "rate": 120,
+                        "available_qty": 4,
+                        "is_default": False,
+                    },
+                ],
+                "available_qty": 0,
+                "total_available_qty": 4,
+                "is_stock_item": True,
+                "negative_stock_allowed": False,
+            }],
+        )
+
+        payload = get_menu("Room A")
+
+        self.assertTrue(payload["items"][0]["available"])
+        self.assertEqual(payload["items"][0]["available_qty"], 4)
+        self.assertEqual(
+            payload["items"][0]["price_options"][1]["id"], "PROMO-1"
+        )
+
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.group_menu_promotions"
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order._get_locked_waiter_price_list"
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.get_authoritative_item_prices",
+        return_value={"ITEM-A": 170},
+    )
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent"
+    )
+    def test_waiter_rejects_promotion_rate_changed_before_menu_lock(
+        self,
+        _lock_menu_parent,
+        _get_prices,
+        _lock_price_list,
+        group_promotions,
+    ):
+        group_promotions.return_value = {
+            "ITEM-A": [
+                frappe._dict(
+                    name="PROMO-1",
+                    item="ITEM-A",
+                    label="Promoção",
+                    rate=125,
+                )
+            ]
+        }
+
+        with patch(
+            "ury.ury.doctype.ury_order.ury_order.frappe.throw",
+            side_effect=raise_frappe,
+        ):
+            with self.assertRaises(frappe.TimestampMismatchError):
+                _get_locked_waiter_item_prices(
+                    "ROOM-MENU",
+                    ["ITEM-A"],
+                    "ROOM-PRICE-LIST",
+                    {"ITEM-A": 170},
+                    items=[{
+                        "item": "ITEM-A",
+                        "price_option": "PROMO-1",
+                        "_expected_option_rate": 120,
+                    }],
+                )
+
+        group_promotions.assert_called_once_with(
+            "ROOM-MENU", ["ITEM-A"], for_update=True
+        )
+
+    def test_append_only_sync_strips_internal_option_rate_before_append(self):
+        source = inspect.getsource(_sync_order)
+        price_check = source.index("locked_item_prices =")
+        strip_token = source.index('item.pop("_expected_option_rate", None)')
+        append_items = source.index("appended_items =")
+        self.assertLess(price_check, strip_token)
+        self.assertLess(strip_token, append_items)
+
+    @patch(
+        "ury.ury.doctype.ury_order.ury_order.group_menu_promotions",
+        return_value={},
+    )
     @patch(
         "ury.ury.doctype.ury_order.ury_order.get_authoritative_item_prices",
         return_value={"ITEM-NEW": 170},
     )
     @patch("ury.ury.doctype.ury_order.ury_order.frappe.db.get_value")
     def test_waiter_append_preserves_existing_line_and_uses_exact_server_price(
-        self, get_value, get_prices
+        self, get_value, get_prices, get_promotions
     ):
         existing = frappe._dict(
             name="ROW-OLD",
@@ -620,6 +1202,9 @@ class TestWaiterAPI(TestCase):
         get_prices.assert_called_once_with(
             ["ITEM-NEW"], "ROOM-PRICE-LIST"
         )
+        get_promotions.assert_called_once_with(
+            "ROOM-MENU", ["ITEM-NEW"], for_update=True
+        )
 
     def test_waiter_price_list_flag_bypasses_legacy_price_list_rewrite(self):
         doc = frappe._dict(
@@ -708,12 +1293,23 @@ class TestWaiterAPI(TestCase):
         ), patch(
             "ury.ury.doctype.ury_order.ury_order._reconcile_invoice_merged_tables"
         ), patch(
-            "ury.ury.doctype.ury_order.ury_order.get_restaurant_and_menu_name",
-            return_value=("Branch A", "ROOM-MENU", "Restaurant A"),
-        ) as get_table_menu, patch(
+            "ury.ury.doctype.ury_order.ury_order._get_locked_waiter_menu",
+            return_value="ROOM-MENU",
+        ) as get_locked_menu, patch(
+            "ury.ury.doctype.ury_order.ury_order._get_locked_waiter_price_list",
+            return_value="ROOM-PRICE-LIST",
+        ), patch(
+            "ury.ury.doctype.ury_order.ury_order.lock_menu_price_options_parent"
+        ) as lock_menu_parent, patch(
+            "ury.ury.doctype.ury_order.ury_order.get_authoritative_item_prices",
+            return_value={"ITEM-A": 170},
+        ) as get_locked_prices, patch(
             "ury.ury.doctype.ury_order.ury_order._append_server_priced_order_items",
             side_effect=append_item,
         ) as append_server_items, patch(
+            "ury.ury.doctype.ury_order.ury_order.get_menu_promotions",
+            return_value=[],
+        ), patch(
             "ury.ury.doctype.ury_order.ury_order._get_stock_lock_item_codes",
             return_value=[],
         ), patch(
@@ -747,6 +1343,7 @@ class TestWaiterAPI(TestCase):
                 strict_invoice=True,
                 expected_invoice_name="INV-1",
                 append_only=True,
+                expected_menu="ROOM-MENU",
                 expected_price_list="ROOM-PRICE-LIST",
                 expected_item_prices={"ITEM-A": 170},
             )
@@ -763,7 +1360,16 @@ class TestWaiterAPI(TestCase):
             "Dine In",
             preserve_existing_price_list=True,
         )
-        get_table_menu.assert_called_once_with("Table 1")
+        get_locked_menu.assert_called_once_with(
+            "Table 1",
+            "Room A",
+            "ROOM-MENU",
+            ["ITEM-A"],
+        )
+        lock_menu_parent.assert_called_once_with("ROOM-MENU")
+        get_locked_prices.assert_called_once_with(
+            ["ITEM-A"], "ROOM-PRICE-LIST", for_update=True
+        )
         append_server_items.assert_called_once()
 
     def test_legacy_sync_keeps_branch_menu_first_item_price_and_comment_rule(self):
@@ -776,6 +1382,12 @@ class TestWaiterAPI(TestCase):
         )
 
         def legacy_value(doctype, filters, fieldname):
+            if doctype == "Price List":
+                self.assertEqual(
+                    (filters, fieldname),
+                    ("LEGACY-PRICE-LIST", "restaurant_menu"),
+                )
+                return None
             if doctype == "URY Menu":
                 self.assertEqual(filters, {"branch": "Branch A"})
                 self.assertEqual(fieldname, "name")
@@ -899,8 +1511,43 @@ class TestWaiterAPI(TestCase):
             source.index("get_order_invoice"),
         )
         self.assertLess(
+            source.index("_get_locked_waiter_menu("),
+            source.index("get_order_invoice"),
+        )
+        self.assertLess(
+            source.index("_get_locked_waiter_menu("),
+            source.index("_append_server_priced_order_items("),
+        )
+        self.assertLess(
+            source.index("get_order_invoice"),
+            source.index("_get_locked_waiter_item_prices("),
+        )
+        self.assertLess(
+            source.index("_get_locked_waiter_menu("),
+            source.index("invoice.save(ignore_permissions=True)"),
+        )
+        self.assertLess(
             source.index("get_order_invoice"),
             source.index("_lock_stock_bins"),
+        )
+        self.assertLess(
+            source.index("lock_menu_price_options_parent(promotion_menu)"),
+            source.index("locked_promotion_base_rates ="),
+        )
+        self.assertIn(
+            "price_option_item_codes, price_list, for_update=True",
+            source,
+        )
+        self.assertIn("for_update=True,\n        )", source)
+
+        register_source = inspect.getsource(register_order)
+        self.assertLess(
+            register_source.index("_get_opening("),
+            register_source.index("_get_locked_waiter_menu("),
+        )
+        self.assertLess(
+            register_source.index("_get_locked_waiter_menu("),
+            register_source.index("_active_table_invoices("),
         )
 
     @patch("ury.ury_pos.waiter_api._complete_waiter_request")
@@ -910,6 +1557,7 @@ class TestWaiterAPI(TestCase):
     @patch("ury.ury_pos.waiter_api.frappe.get_doc")
     @patch("ury.ury_pos.waiter_api._active_table_invoices")
     @patch("ury.ury_pos.waiter_api._get_table")
+    @patch("ury.ury_pos.waiter_api._get_locked_waiter_menu")
     @patch("ury.ury_pos.waiter_api._get_opening")
     @patch("ury.ury_pos.waiter_api._validate_production_routes")
     @patch("ury.ury_pos.waiter_api._hydrate_pending_items")
@@ -924,6 +1572,7 @@ class TestWaiterAPI(TestCase):
         hydrate_items,
         validate_routes,
         get_opening,
+        get_locked_menu,
         get_table,
         active_invoices,
         get_doc,
@@ -948,7 +1597,8 @@ class TestWaiterAPI(TestCase):
                 "item_name": "Server Item Name",
                 "qty": 2,
                 "comment": "sem gelo",
-                "_authoritative_rate": 170,
+                "_expected_option_rate": 170,
+                "_authoritative_base_rate": 170,
             }
         ]
         hydrate_items.return_value = pending
@@ -1021,6 +1671,7 @@ class TestWaiterAPI(TestCase):
         self.assertTrue(save_kwargs["strict_invoice"])
         self.assertTrue(save_kwargs["append_only"])
         self.assertEqual(save_kwargs["expected_invoice_name"], "INV-1")
+        self.assertEqual(save_kwargs["expected_menu"], "ROOM-MENU")
         self.assertEqual(save_kwargs["expected_price_list"], "ROOM-PRICE-LIST")
         self.assertEqual(save_kwargs["expected_item_prices"], {"ITEM-A": 170})
         clean_pending = [
@@ -1029,12 +1680,17 @@ class TestWaiterAPI(TestCase):
                 "item_name": "Server Item Name",
                 "qty": 2,
                 "comment": "sem gelo",
+                "_expected_option_rate": 170,
             }
         ]
         self.assertEqual(save_kwargs["items"], clean_pending)
         self.assertNotEqual(save_kwargs["items"][0]["item_name"], "Spoofed Name")
+        self.assertNotIn("_authoritative_base_rate", save_kwargs["items"][0])
         get_authoritative_menu.assert_called_once_with(
             actor, "Room A", table="Table 1"
+        )
+        get_locked_menu.assert_called_once_with(
+            "Table 1", "Room A", "ROOM-MENU", ["ITEM-A"]
         )
         hydrate_items.assert_called_once_with(
             menu,
@@ -1049,7 +1705,16 @@ class TestWaiterAPI(TestCase):
         )
 
         create_kot.assert_called_once_with(
-            "INV-1", "Walk In", "Table 1", clean_pending, None
+            "INV-1",
+            "Walk In",
+            "Table 1",
+            [{
+                "item": "ITEM-A",
+                "item_name": "Server Item Name",
+                "qty": 2,
+                "comment": "sem gelo",
+            }],
+            None,
         )
         self.assertEqual(
             result["kots"], [{"name": "KOT-1", "production": "Bar"}]
@@ -1068,6 +1733,7 @@ class TestWaiterAPI(TestCase):
     @patch("ury.ury_pos.waiter_api.frappe.get_doc")
     @patch("ury.ury_pos.waiter_api._active_table_invoices", return_value=[])
     @patch("ury.ury_pos.waiter_api._get_table")
+    @patch("ury.ury_pos.waiter_api._get_locked_waiter_menu")
     @patch("ury.ury_pos.waiter_api._get_opening")
     @patch("ury.ury_pos.waiter_api._validate_production_routes")
     @patch("ury.ury_pos.waiter_api._hydrate_pending_items")
@@ -1082,6 +1748,7 @@ class TestWaiterAPI(TestCase):
         hydrate_items,
         validate_routes,
         get_opening,
+        _get_locked_menu,
         get_table,
         _active_invoices,
         get_doc,
@@ -1104,7 +1771,8 @@ class TestWaiterAPI(TestCase):
                 "item_name": "Item A",
                 "qty": 1,
                 "comment": None,
-                "_authoritative_rate": 170,
+                "_expected_option_rate": 170,
+                "_authoritative_base_rate": 170,
             }
         ]
         hydrate_items.return_value = pending

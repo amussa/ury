@@ -51,6 +51,31 @@ function isSplitBill(order: Pick<POSInvoice, 'split_total' | 'custom_split_group
   );
 }
 
+interface EditableInvoiceItem {
+  name: string;
+  item_code: string;
+  item_name: string;
+  rate: number;
+  qty: number;
+  amount: number;
+  image?: string | null;
+  description?: string | null;
+  custom_ury_price_option?: string | null;
+  custom_ury_price_option_label?: string | null;
+}
+
+interface EditableInvoiceDocument {
+  name: string;
+  docstatus: number;
+  order_type: POSInvoice['order_type'];
+  restaurant_table?: string | null;
+  custom_restaurant_room?: string | null;
+  customer: string;
+  customer_name: string;
+  mobile_number: string;
+  items?: EditableInvoiceItem[];
+}
+
 export default function Orders() {
   const { 
     orders,
@@ -161,7 +186,7 @@ export default function Orders() {
     return formattedDate;
   };
 
-  const handleOrderClick = (order: any) => {
+  const handleOrderClick = (order: POSInvoice) => {
     selectOrder(order);
   };
 
@@ -212,7 +237,7 @@ export default function Orders() {
     try {
       const res = await fetch(`/api/method/frappe.client.get?doctype=POS+Invoice&name=${selectedOrder.name}`);
       if (!res.ok) throw new Error('Failed to fetch order details');
-      const data = await res.json();
+      const data = await res.json() as { message: EditableInvoiceDocument };
       const order = data.message;
       // Fill POS store
       posStore.resetOrderState();
@@ -224,24 +249,45 @@ export default function Orders() {
       }
       posStore.setSelectedCustomer({ id: order.customer, name: order.customer_name, phone: order.mobile_number });
       // Fill cart
-      const items = (order.items || []).map((item: any) => ({
-        id: item.item_code,
-        name: item.item_name,
-        price: item.rate,
-        quantity: item.qty,
-        amount: item.amount,
-        image: item.image || null,
-        uniqueId: item.name,
-        item: item.item_code,
-        item_name: item.item_name,
-        item_image: null,
-        course: '',
-        description: item.description || '',
-        special_dish: 0,
-        tax_rate: 0,
-      }));
+      const items = (order.items || []).map(item => {
+        const menuItem = posStore.menuItems.find(candidate => candidate.item === item.item_code);
+        const optionId = item.custom_ury_price_option || null;
+        const selectedPriceOption = optionId
+          ? menuItem?.price_options?.find(option => option.id === optionId) || {
+              id: optionId,
+              label: item.custom_ury_price_option_label || (optionId === 'standard'
+                ? t('product_dialog.normal_price')
+                : optionId),
+              rate: Number(item.rate) || 0,
+              available_qty: 0,
+              is_default: optionId === 'standard',
+            }
+          : undefined;
+
+        return {
+          ...(menuItem || {}),
+          id: item.item_code,
+          name: item.item_name,
+          price: item.rate,
+          quantity: item.qty,
+          amount: item.amount,
+          image: item.image || null,
+          uniqueId: item.name,
+          item: item.item_code,
+          item_name: item.item_name,
+          item_image: null,
+          course: '',
+          description: item.description || '',
+          special_dish: 0 as const,
+          tax_rate: 0,
+          selectedPriceOption,
+        };
+      });
       const stockResult = await posStore.hydrateOrderItems(items, stockExcludeInvoice);
-      showCartMutationError(stockResult);
+      if (showCartMutationError(stockResult)) {
+        posStore.resetOrderState();
+        return;
+      }
       // Redirect to POS page
       navigate('/');
     } catch (err) {
@@ -271,8 +317,9 @@ export default function Orders() {
         setSelectedStatus('Draft');
         fetchOrders();
       }
-    } catch (err: any) {
-      showToast.error(t('errors.print_failed', { reason: err?.message || String(err) }));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      showToast.error(t('errors.print_failed', { reason }));
     } finally {
       setIsPrinting(false);
     }
@@ -695,6 +742,13 @@ export default function Orders() {
                     <div key={index} className="flex justify-between items-start py-2 border-b border-gray-100">
                       <div className="flex-1">
                         <p className="text-sm font-medium text-gray-900">{item.item_name}</p>
+                        {item.custom_ury_price_option_label && (
+                          <p className="text-xs font-medium text-blue-700">
+                            {t('cart.price_option', { option: item.custom_ury_price_option_label })}
+                            {' · '}
+                            {formatCurrency(item.rate)}
+                          </p>
+                        )}
                         <p className="text-xs text-gray-500">Qty: {item.qty}</p>
                       </div>
                       <div className="text-right">

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { storage } from '@ury/core';
-import { getRestaurantMenu, getAggregatorMenu, MenuItem as APIMenuItem } from '../lib/menu-api';
+import { getRestaurantMenu, getAggregatorMenu, MenuItem as APIMenuItem, PriceOption } from '../lib/menu-api';
 import { getCurrencyInfo, PosProfileCombined, getCombinedPosProfile } from '../lib/pos-profile-api';
 import { getMenuCourses } from '../lib/menu-course-api';
 import { getCustomerGroups, getCustomerTerritories } from '../lib/customer-api';
@@ -9,6 +9,7 @@ import { DEFAULT_ORDER_TYPE, OrderType } from '../data/order-types';
 import { getTableOrder, TableOrder } from '../lib/order-api';
 import { getPaymentModes } from '../lib/payment-api';
 import { getStockAvailability, StockAvailability } from '../lib/stock-api';
+import { t } from '../i18n';
 
 // Constants
 const MAX_QUANTITY = 99;
@@ -52,13 +53,15 @@ export interface OrderItem extends MenuItem {
   configurationId?: string;
   configurationRole?: 'main' | 'addon';
   configuredAddons?: Array<{ id: string; name: string; price: number }>;
+  selectedPriceOption?: PriceOption;
 }
 
 export type CartMutationFailureCode =
   | 'invalid_quantity'
   | 'quantity_limit'
   | 'stock_check_failed'
-  | 'insufficient_stock';
+  | 'insufficient_stock'
+  | 'insufficient_price_option_stock';
 
 export type CartMutationResult =
   | { ok: true }
@@ -70,6 +73,7 @@ export type CartMutationResult =
       requestedQuantity?: number;
       availableQuantity?: number;
       stockUom?: string | null;
+      priceOptionLabel?: string;
     };
 
 export interface PaymentMode {
@@ -190,11 +194,12 @@ interface POSStore extends POSState {
 const generateUniqueId = (item: OrderItem): string => {
   const variantId = item.selectedVariant?.id || 'default';
   const addonIds = item.selectedAddons?.map(addon => addon.id).sort().join('-') || 'no-addons';
-  return `${item.id}-${variantId}-${addonIds}`;
+  const priceOptionId = item.selectedPriceOption?.id || 'single-price';
+  return `${item.id}-${variantId}-${priceOptionId}-${addonIds}`;
 };
 
 const calculateItemPrice = (item: OrderItem): number => {
-  const basePrice = item.selectedVariant?.price || item.price;
+  const basePrice = item.selectedPriceOption?.rate ?? item.selectedVariant?.price ?? item.price;
   const addonsTotal = item.selectedAddons?.reduce((sum, addon) => sum + addon.price, 0) || 0;
   return basePrice + addonsTotal;
 };
@@ -212,6 +217,15 @@ const normalizeStock = (stock: StockAvailability): StockAvailability => ({
   is_stock_item: Boolean(stock.is_stock_item),
   negative_stock_allowed: Boolean(stock.negative_stock_allowed),
   stock_uom: stock.stock_uom || null,
+  total_available_qty: stock.total_available_qty === undefined
+    ? undefined
+    : Number(stock.total_available_qty) || 0,
+  price_options: stock.price_options?.map(option => ({
+    ...option,
+    rate: Number(option.rate) || 0,
+    available_qty: Number(option.available_qty) || 0,
+    is_default: Boolean(option.is_default),
+  })),
 });
 
 const stockFromMenuItem = (item: MenuItem): StockAvailability | null => {
@@ -225,19 +239,34 @@ const stockFromMenuItem = (item: MenuItem): StockAvailability | null => {
     is_stock_item: item.is_stock_item,
     stock_uom: item.stock_uom || null,
     negative_stock_allowed: Boolean(item.negative_stock_allowed),
+    total_available_qty: item.total_available_qty,
+    price_options: item.price_options,
   });
 };
 
-const withStock = <T extends MenuItem>(item: T, stock?: StockAvailability): T =>
-  stock
-    ? {
-        ...item,
-        available_qty: stock.available_qty,
-        is_stock_item: stock.is_stock_item,
-        stock_uom: stock.stock_uom,
-        negative_stock_allowed: stock.negative_stock_allowed,
-      }
-    : item;
+const withStock = <T extends MenuItem>(item: T, stock?: StockAvailability): T => {
+  if (!stock) return item;
+  const refreshedOptions = stock.price_options;
+  const selected = (item as OrderItem).selectedPriceOption;
+  const inferredSelected = selected || (
+    'quantity' in item && refreshedOptions?.length
+      ? refreshedOptions.find(option => option.is_default) || refreshedOptions[0]
+      : undefined
+  );
+  const refreshedSelected = inferredSelected
+    ? refreshedOptions?.find(option => option.id === inferredSelected.id) || inferredSelected
+    : undefined;
+  return {
+    ...item,
+    available_qty: stock.total_available_qty ?? stock.available_qty,
+    total_available_qty: stock.total_available_qty,
+    is_stock_item: stock.is_stock_item,
+    stock_uom: stock.stock_uom,
+    negative_stock_allowed: stock.negative_stock_allowed,
+    price_options: refreshedOptions,
+    ...(refreshedSelected ? { selectedPriceOption: refreshedSelected } : {}),
+  } as T;
+};
 
 const getQuantitiesByItemCode = (items: OrderItem[]): Record<string, number> =>
   items.reduce<Record<string, number>>((totals, item) => {
@@ -245,6 +274,64 @@ const getQuantitiesByItemCode = (items: OrderItem[]): Record<string, number> =>
     totals[itemCode] = (totals[itemCode] || 0) + item.quantity;
     return totals;
   }, {});
+
+const getQuantitiesByPriceOption = (items: OrderItem[]): Record<string, number> =>
+  items.reduce<Record<string, number>>((totals, item) => {
+    const optionId = item.selectedPriceOption?.id;
+    if (!optionId) return totals;
+    const key = `${getItemCode(item)}\u0000${optionId}`;
+    totals[key] = (totals[key] || 0) + item.quantity;
+    return totals;
+  }, {});
+
+const validateOrderSnapshotAvailability = (
+  items: OrderItem[],
+  stockByItem: Record<string, StockAvailability>,
+): CartMutationResult => {
+  const quantities = getQuantitiesByItemCode(items);
+  for (const [itemCode, requestedQuantity] of Object.entries(quantities)) {
+    const stock = stockByItem[itemCode];
+    if (!stock) {
+      return { ok: false, code: 'stock_check_failed', itemCode, itemName: itemCode };
+    }
+    const physicalAvailable = stock.total_available_qty ?? stock.available_qty;
+    if (stock.is_stock_item && requestedQuantity > physicalAvailable + Number.EPSILON) {
+      const failedItem = items.find(item => getItemCode(item) === itemCode);
+      return {
+        ok: false,
+        code: 'insufficient_stock',
+        itemCode,
+        itemName: failedItem ? getItemName(failedItem) : itemCode,
+        requestedQuantity,
+        availableQuantity: physicalAvailable,
+        stockUom: stock.stock_uom,
+      };
+    }
+  }
+
+  const optionQuantities = getQuantitiesByPriceOption(items);
+  for (const [key, requestedQuantity] of Object.entries(optionQuantities)) {
+    const [itemCode, optionId] = key.split('\u0000');
+    const stock = stockByItem[itemCode];
+    const option = stock?.price_options?.find(candidate => candidate.id === optionId);
+    if (!option || requestedQuantity > option.available_qty + Number.EPSILON) {
+      const failedItem = items.find(
+        item => getItemCode(item) === itemCode && item.selectedPriceOption?.id === optionId,
+      );
+      return {
+        ok: false,
+        code: 'insufficient_price_option_stock',
+        itemCode,
+        itemName: failedItem ? getItemName(failedItem) : itemCode,
+        priceOptionLabel: failedItem?.selectedPriceOption?.label || option?.label,
+        requestedQuantity,
+        availableQuantity: option?.available_qty ?? 0,
+        stockUom: stock?.stock_uom,
+      };
+    }
+  }
+  return SUCCESS_RESULT;
+};
 
 const addItemsToSnapshot = (orders: OrderItem[], items: OrderItem[]): OrderItem[] => {
   const nextOrders = [...orders];
@@ -272,6 +359,8 @@ const addItemsToSnapshot = (orders: OrderItem[], items: OrderItem[]): OrderItem[
 };
 
 let cartMutationQueue: Promise<void> = Promise.resolve();
+let menuFetchSequence = 0;
+let orderLoadSequence = 0;
 
 export const usePOSStore = create<POSStore>((set, get) => ({
   menuItems: [],
@@ -331,7 +420,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       }
 
       set({ isInitializing: false });
-    } catch (error) {
+    } catch {
       set({ 
         error: 'Failed to initialize app. Please refresh the page.',
         isInitializing: false 
@@ -402,12 +491,14 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   fetchMenuItems: async () => {
     const { posProfile, selectedRoom, selectedOrderType } = get();
     if (!posProfile?.restaurant) return;
+    const requestSequence = ++menuFetchSequence;
 
     try {
       set({ menuLoading: true, error: null });
       const items = await getRestaurantMenu(posProfile.name, selectedRoom, selectedOrderType);
+      if (requestSequence !== menuFetchSequence) return;
       
-      const menuItems: MenuItem[] = items.map((item: any) => ({
+      const menuItems: MenuItem[] = items.map(item => ({
         id: item.item,
         name: item.item_name,
         image: item.item_image || null,
@@ -421,6 +512,15 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         special_dish: item.special_dish || 0,
         tax_rate: 0,
         available_qty: Number(item.available_qty) || 0,
+        total_available_qty: item.total_available_qty === undefined
+          ? undefined
+          : Number(item.total_available_qty) || 0,
+        price_options: item.price_options?.map((option: PriceOption) => ({
+          ...option,
+          rate: Number(option.rate) || 0,
+          available_qty: Number(option.available_qty) || 0,
+          is_default: Boolean(option.is_default),
+        })),
         is_stock_item: Boolean(item.is_stock_item),
         stock_uom: item.stock_uom || null,
         negative_stock_allowed: Boolean(item.negative_stock_allowed),
@@ -458,19 +558,24 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         );
       }
     } catch (error) {
+      if (requestSequence !== menuFetchSequence) return;
       set({ error: 'Failed to load menu items' });
       console.error('Error loading menu items:', error);
     } finally {
-      set({ menuLoading: false });
+      if (requestSequence === menuFetchSequence) {
+        set({ menuLoading: false });
+      }
     }
   },
 
   fetchAggregatorMenu: async (aggregator: string) => {
+    const requestSequence = ++menuFetchSequence;
     try {
       set({ menuLoading: true, error: null });
       const items = await getAggregatorMenu(aggregator, get().posProfile?.name);
+      if (requestSequence !== menuFetchSequence) return;
       
-      const menuItems: MenuItem[] = items.map((item: any) => ({
+      const menuItems: MenuItem[] = items.map(item => ({
         ...item,
         id: item.item,
         name: item.item_name,
@@ -478,6 +583,15 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         price: typeof item.rate === 'string' ? parseFloat(item.rate) : item.rate || 0,
         category: item.course,
         available_qty: Number(item.available_qty) || 0,
+        total_available_qty: item.total_available_qty === undefined
+          ? undefined
+          : Number(item.total_available_qty) || 0,
+        price_options: item.price_options?.map(option => ({
+          ...option,
+          rate: Number(option.rate) || 0,
+          available_qty: Number(option.available_qty) || 0,
+          is_default: Boolean(option.is_default),
+        })),
         is_stock_item: Boolean(item.is_stock_item),
         stock_uom: item.stock_uom || null,
         negative_stock_allowed: Boolean(item.negative_stock_allowed),
@@ -516,6 +630,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         );
       }
     } catch (error) {
+      if (requestSequence !== menuFetchSequence) return;
       set({ error: 'Failed to load aggregator menu', menuLoading: false });
       console.error('Error loading aggregator menu:', error);
     }
@@ -570,6 +685,8 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         posProfile.name,
         uniqueItemCodes,
         excludeInvoice,
+        get().selectedRoom,
+        get().selectedOrderType,
       );
       const stocks = Object.fromEntries(
         Object.entries(responseStocks).map(([itemCode, stock]) => [itemCode, normalizeStock(stock)]),
@@ -624,10 +741,26 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         const proposedOrders = addItemsToSnapshot(baseOrders, items);
         const currentQuantities = getQuantitiesByItemCode(currentOrders);
         const proposedQuantities = getQuantitiesByItemCode(proposedOrders);
+        const currentOptionQuantities = getQuantitiesByPriceOption(currentOrders);
+        const proposedOptionQuantities = getQuantitiesByPriceOption(proposedOrders);
         const increasedItemCodes = Object.keys(proposedQuantities).filter(
           itemCode => proposedQuantities[itemCode] > (currentQuantities[itemCode] || 0) + Number.EPSILON,
         );
-        return { proposedOrders, proposedQuantities, increasedItemCodes };
+        const increasedOptionKeys = Object.keys(proposedOptionQuantities).filter(
+          key => proposedOptionQuantities[key] > (currentOptionQuantities[key] || 0) + Number.EPSILON,
+        );
+        const itemCodesToRefresh = [...new Set([
+          ...increasedItemCodes,
+          ...increasedOptionKeys.map(key => key.split('\u0000')[0]),
+        ])];
+        return {
+          proposedOrders,
+          proposedQuantities,
+          proposedOptionQuantities,
+          increasedItemCodes,
+          increasedOptionKeys,
+          itemCodesToRefresh,
+        };
       };
 
       let proposal = buildProposal();
@@ -642,16 +775,16 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         };
       }
 
-      if (proposal.increasedItemCodes.length > 0) {
+      if (proposal.itemCodesToRefresh.length > 0) {
         const { stockExcludeInvoice } = get();
-        const initiallyRequestedCodes = [...proposal.increasedItemCodes];
+        const initiallyRequestedCodes = [...proposal.itemCodesToRefresh];
         const refreshResult = await get().refreshStockForItems(
           initiallyRequestedCodes,
           stockExcludeInvoice,
           requestedRevision,
         );
         if (!refreshResult.ok) {
-          const failedCode = refreshResult.itemCode || proposal.increasedItemCodes[0];
+          const failedCode = refreshResult.itemCode || proposal.itemCodesToRefresh[0];
           const failedItem = items.find(item => getItemCode(item) === failedCode);
           return {
             ...refreshResult,
@@ -675,7 +808,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         }
 
         const refreshedCodes = new Set(initiallyRequestedCodes);
-        const missingCodes = proposal.increasedItemCodes.filter(itemCode => !refreshedCodes.has(itemCode));
+        const missingCodes = proposal.itemCodesToRefresh.filter(itemCode => !refreshedCodes.has(itemCode));
         if (missingCodes.length > 0) {
           const secondRefresh = await get().refreshStockForItems(
             missingCodes,
@@ -683,6 +816,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
             requestedRevision,
           );
           if (!secondRefresh.ok) return secondRefresh;
+          missingCodes.forEach(itemCode => refreshedCodes.add(itemCode));
           proposal = buildProposal();
         }
 
@@ -693,7 +827,8 @@ export const usePOSStore = create<POSStore>((set, get) => ({
           if (!stock) {
             return { ok: false, code: 'stock_check_failed', itemCode, itemName: itemCode };
           }
-          if (stock.is_stock_item && requestedQuantity > stock.available_qty + Number.EPSILON) {
+          const physicalAvailable = stock.total_available_qty ?? stock.available_qty;
+          if (stock.is_stock_item && requestedQuantity > physicalAvailable + Number.EPSILON) {
             const failedItem = items.find(item => getItemCode(item) === itemCode);
             return {
               ok: false,
@@ -701,8 +836,33 @@ export const usePOSStore = create<POSStore>((set, get) => ({
               itemCode,
               itemName: failedItem ? getItemName(failedItem) : itemCode,
               requestedQuantity,
-              availableQuantity: stock.available_qty,
+              availableQuantity: physicalAvailable,
               stockUom: stock.stock_uom,
+            };
+          }
+        }
+
+        const optionKeysToValidate = Object.keys(proposal.proposedOptionQuantities).filter(
+          key => refreshedCodes.has(key.split('\u0000')[0]),
+        );
+        for (const key of optionKeysToValidate) {
+          const requestedQuantity = proposal.proposedOptionQuantities[key];
+          const [itemCode, optionId] = key.split('\u0000');
+          const stock = stockByItem[itemCode];
+          const option = stock?.price_options?.find(candidate => candidate.id === optionId);
+          if (!option || requestedQuantity > option.available_qty + Number.EPSILON) {
+            const failedItem = proposal.proposedOrders.find(
+              item => getItemCode(item) === itemCode && item.selectedPriceOption?.id === optionId,
+            );
+            return {
+              ok: false,
+              code: 'insufficient_price_option_stock',
+              itemCode,
+              itemName: failedItem ? getItemName(failedItem) : itemCode,
+              priceOptionLabel: failedItem?.selectedPriceOption?.label || option?.label,
+              requestedQuantity,
+              availableQuantity: option?.available_qty ?? 0,
+              stockUom: stock?.stock_uom,
             };
           }
         }
@@ -736,18 +896,28 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       cartRevision: state.cartRevision + 1,
     }));
     const revision = get().cartRevision;
-    return get().refreshStockForItems(
+    const refreshResult = await get().refreshStockForItems(
       hydratedItems.map(getItemCode),
       excludeInvoice,
       revision,
     );
+    const result = refreshResult.ok
+      ? validateOrderSnapshotAvailability(get().activeOrders, get().stockByItem)
+      : refreshResult;
+    if (!result.ok && get().cartRevision === revision) {
+      set((state) => ({
+        activeOrders: [],
+        cartRevision: state.cartRevision + 1,
+      }));
+    }
+    return result;
   },
 
   removeFromOrder: async (uniqueId: string) => {
     try {
       const newOrders = get().activeOrders.filter(item => item.uniqueId !== uniqueId);
       set({ activeOrders: newOrders });
-    } catch (error) {
+    } catch {
       set({ error: 'Failed to remove item from cart' });
     }
   },
@@ -775,7 +945,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   clearOrder: async () => {
     try {
       set((state) => ({ activeOrders: [], cartRevision: state.cartRevision + 1 }));
-    } catch (error) {
+    } catch {
       set({ error: 'Failed to clear cart' });
     }
   },
@@ -784,6 +954,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSelectedCustomer: (customer) => set({ selectedCustomer: customer }),
   setSelectedTable: (table: string | null, room: string | null, doNotLoadOrder: boolean = false) => {
+    if (get().selectedTable !== table) orderLoadSequence += 1;
     set((state) => ({
       selectedTable: table,
       selectedRoom: room,
@@ -808,6 +979,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       isUpdatingOrder: false,
       orderId: null,
       stockExcludeInvoice: null,
+      orderLoading: false,
       cartRevision: state.cartRevision + 1,
     }));
     
@@ -867,7 +1039,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       return;
     }
     const groups = await getCustomerGroups();
-    const names = groups.map((g: any) => g.name);
+    const names = groups.map(group => group.name);
     set({ customerGroups: names });
     sessionStorage.setItem('customerGroups', JSON.stringify(names));
   },
@@ -879,7 +1051,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       return;
     }
     const terrs = await getCustomerTerritories();
-    const names = terrs.map((t: any) => t.name);
+    const names = terrs.map(territory => territory.name);
     set({ territories: names });
     sessionStorage.setItem('territories', JSON.stringify(names));
   },
@@ -931,13 +1103,31 @@ export const usePOSStore = create<POSStore>((set, get) => ({
   },
 
   loadTableOrder: async (table: string) => {
+    const requestSequence = ++orderLoadSequence;
     try {
       set({ orderLoading: true, error: null });
       const response = await getTableOrder(table);
+      if (requestSequence !== orderLoadSequence || get().selectedTable !== table) return;
       const order = response.message;
       if (order && order.name && order.items && order.items.length > 0) {
         const orderItems: OrderItem[] = order.items.map(item => {
+          const menuItem = get().menuItems.find(candidate => candidate.item === item.item_code);
+          const optionId = item.custom_ury_price_option || (
+            menuItem?.price_options?.length ? 'standard' : null
+          );
+          const selectedPriceOption = optionId
+            ? menuItem?.price_options?.find(option => option.id === optionId) || {
+                id: optionId,
+                label: item.custom_ury_price_option_label || (optionId === 'standard'
+                  ? t('product_dialog.normal_price')
+                  : optionId),
+                rate: Number(item.rate) || 0,
+                available_qty: 0,
+                is_default: optionId === 'standard',
+              }
+            : undefined;
           const orderItem = {
+            ...(menuItem || {}),
             id: item.item_code,
             name: item.item_name,
             price: item.rate,
@@ -952,6 +1142,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
             special_dish: 0 as 0 | 1,
             tax_rate: 0,
             comment: item.comment || '',
+            selectedPriceOption,
           };
           return {
             ...orderItem,
@@ -970,10 +1161,14 @@ export const usePOSStore = create<POSStore>((set, get) => ({
           orderId: order.name,
           stockExcludeInvoice: order.docstatus === 0 ? order.name : null,
         });
-        await get().hydrateOrderItems(
+        const hydrationResult = await get().hydrateOrderItems(
           orderItems,
           order.docstatus === 0 ? order.name : null,
         );
+        if (requestSequence !== orderLoadSequence || get().selectedTable !== table) return;
+        if (!hydrationResult.ok) {
+          throw new Error('The table order could not be revalidated.');
+        }
       } else {
         set((state) => ({
           tableOrder: null,
@@ -985,7 +1180,8 @@ export const usePOSStore = create<POSStore>((set, get) => ({
           cartRevision: state.cartRevision + 1,
         }));
       }
-    } catch (error) {
+    } catch {
+      if (requestSequence !== orderLoadSequence || get().selectedTable !== table) return;
       set((state) => ({
         error: 'Failed to load table order',
         tableOrder: null,
@@ -997,11 +1193,12 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         cartRevision: state.cartRevision + 1,
       }));
     } finally {
-      set({ orderLoading: false });
+      if (requestSequence === orderLoadSequence) set({ orderLoading: false });
     }
   },
 
   clearTableOrder: () => {
+    orderLoadSequence += 1;
     set((state) => ({
       tableOrder: null,
       activeOrders: [],
@@ -1009,6 +1206,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       isUpdatingOrder: false,
       orderId: null,
       stockExcludeInvoice: null,
+      orderLoading: false,
       cartRevision: state.cartRevision + 1,
     }));
   },
@@ -1024,6 +1222,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
 
   resetOrderState: () => {
     const { fetchMenuItems } = get();
+    orderLoadSequence += 1;
     
     set((state) => ({
       selectedCustomer: getDefaultCustomer(get().posProfile),

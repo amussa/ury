@@ -111,6 +111,11 @@ export function OrderSummarySheet({
                   <span className="grid h-8 min-w-8 place-items-center rounded-lg bg-slate-200 px-2 text-sm font-extrabold text-slate-700">{line.qty}×</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-bold text-slate-800">{line.item_name}</p>
+                    {line.price_option_label ? (
+                      <p className="mt-1 inline-flex rounded-full bg-white px-2 py-0.5 text-[11px] font-extrabold text-primary">
+                        {line.price_option_label} · {formatMoney(line.rate, currency, currencySymbol)} cada
+                      </p>
+                    ) : null}
                     {line.comment ? <p className="mt-1 text-xs italic text-slate-500">{line.comment}</p> : null}
                   </div>
                   <span className="shrink-0 text-sm font-bold text-slate-700">{formatMoney(line.amount, currency, currencySymbol)}</span>
@@ -138,6 +143,11 @@ export function OrderSummarySheet({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h4 className="text-sm font-extrabold text-slate-950">{line.item_name}</h4>
+                      {line.price_option_label ? (
+                        <p className="mt-1 inline-flex rounded-full bg-white px-2 py-0.5 text-[11px] font-extrabold text-primary">
+                          {line.price_option_label} · {formatMoney(line.rate, currency, currencySymbol)} cada
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-sm font-bold text-primary">{formatMoney(line.rate * line.qty, currency, currencySymbol)}</p>
                       {line.comment ? <p className="mt-1 text-xs italic leading-5 text-slate-600">{line.comment}</p> : null}
                     </div>

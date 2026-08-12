@@ -32,7 +32,8 @@
     "logout": "Déconnexion"
   },
   "menu": {
-    "special_items": "Plats spéciaux"
+    "special_items": "Plats spéciaux",
+    "multiple_prices": "2 prix"
   },
   "stock": {
     "available": "Stock : {{qty}} {{uom}}",
@@ -60,7 +61,9 @@
     "edit_comment": "Modifier le commentaire",
     "addon": "Supplément",
     "stock_total": "Stock : {{qty}} {{uom}}",
-    "stock_remaining": "Restant : {{qty}} {{uom}}"
+    "stock_remaining": "Restant : {{qty}} {{uom}}",
+    "price_option": "Prix : {{option}}",
+    "price_option_remaining": "{{option}} restant : {{qty}} {{uom}}"
   },
   "order": {
     "select_to_view": "Sélectionnez une commande pour voir les détails",
@@ -149,6 +152,7 @@
     "item_quantity_limit": "{{item}} ne peut pas dépasser {{limit}} unités par ligne.",
     "item_out_of_stock": "{{item}} est en rupture de stock et n'a pas été ajouté.",
     "insufficient_item_stock": "Seulement {{available}} {{uom}} de {{item}} est disponible ; {{requested}} a été demandé au total.",
+    "insufficient_price_option_stock": "Seulement {{available}} {{uom}} de {{item}} au prix {{option}} est disponible ; {{requested}} a été demandé.",
     "stock_check_failed": "Le stock actuel de {{item}} n'a pas pu être vérifié. Le panier n'a pas été modifié ; veuillez réessayer."
   },
   "success": {
@@ -326,7 +330,11 @@
     "total": "Total",
     "update_order": "Mettre à jour la commande",
     "add_to_order": "Ajouter à la commande",
-    "checking_stock": "Vérification du stock..."
+    "checking_stock": "Vérification du stock...",
+    "price_option": "Choisir le prix",
+    "normal_price": "Normal",
+    "sold_out": "Épuisé",
+    "option_available": "{{qty}} {{uom}} disponible(s)"
   },
   "order_types": {
     "dine_in": "Sur place",

@@ -21,6 +21,14 @@ export function getCartMutationErrorMessage(result: CartMutationResult): string 
         requested: result.requestedQuantity ?? 0,
         uom: result.stockUom || '',
       });
+    case 'insufficient_price_option_stock':
+      return t('errors.insufficient_price_option_stock', {
+        item,
+        option: result.priceOptionLabel || t('product_dialog.price_option'),
+        available: result.availableQuantity ?? 0,
+        requested: result.requestedQuantity ?? 0,
+        uom: result.stockUom || '',
+      });
     case 'stock_check_failed':
       return t('errors.stock_check_failed', { item });
   }

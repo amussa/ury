@@ -21,6 +21,7 @@ export interface BillSplitItem {
   qty: number;
   rate: number;
   amount: number;
+  custom_ury_price_option_label?: string | null;
 }
 
 interface BillSplitDialogProps {
@@ -193,6 +194,11 @@ const BillSplitDialog = ({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-medium text-gray-900">{item.item_name}</p>
+                        {item.custom_ury_price_option_label && (
+                          <p className="text-xs font-medium text-blue-700">
+                            {t('cart.price_option', { option: item.custom_ury_price_option_label })}
+                          </p>
+                        )}
                         <p className="text-xs text-gray-500">
                           {t('bill_split.available_qty', { qty: item.qty })}
                         </p>

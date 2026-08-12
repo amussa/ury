@@ -30,11 +30,13 @@ function parseRequestItem(value: unknown): RegisterOrderItem | null {
   const row = record(value);
   if (!row || !validString(row.item_code, 140) || !validPositiveInteger(row.qty, 999)) return null;
   if (typeof row.expected_rate !== 'number' || !Number.isFinite(row.expected_rate) || row.expected_rate < 0) return null;
+  if (row.price_option !== undefined && !validString(row.price_option, 140)) return null;
   if (row.comment !== undefined && !validString(row.comment, 500, true)) return null;
   return {
     item_code: row.item_code,
     qty: row.qty,
     expected_rate: row.expected_rate,
+    ...(typeof row.price_option === 'string' ? { price_option: row.price_option } : {}),
     ...(typeof row.comment === 'string' && row.comment ? { comment: row.comment } : {}),
   };
 }
@@ -69,6 +71,8 @@ function parseDraftItem(value: unknown): DraftOrderItem | null {
   if (!validString(row.id, 160) || !validString(row.item_code, 140) || !validString(row.item_name, 300)) return null;
   if (!validPositiveInteger(row.qty, 999)) return null;
   if (typeof row.rate !== 'number' || !Number.isFinite(row.rate) || row.rate < 0) return null;
+  if (row.price_option !== undefined && row.price_option !== null && !validString(row.price_option, 140)) return null;
+  if (row.price_option_label !== undefined && row.price_option_label !== null && !validString(row.price_option_label, 140)) return null;
   if (!validString(row.comment, 500, true)) return null;
   if (row.available_qty !== null && (typeof row.available_qty !== 'number' || !Number.isFinite(row.available_qty))) return null;
   if (typeof row.is_stock_item !== 'boolean' || typeof row.negative_stock_allowed !== 'boolean') return null;
@@ -80,6 +84,8 @@ function parseDraftItem(value: unknown): DraftOrderItem | null {
     item_name: row.item_name,
     qty: row.qty,
     rate: row.rate,
+    price_option: typeof row.price_option === 'string' ? row.price_option : null,
+    price_option_label: typeof row.price_option_label === 'string' ? row.price_option_label : null,
     comment: row.comment,
     available_qty: row.available_qty as number | null,
     is_stock_item: row.is_stock_item,
@@ -97,6 +103,7 @@ function requestMatchesDraft(request: RegisterOrderRequest, draftItems: DraftOrd
       && item.item_code === draft.item_code
       && item.qty === draft.qty
       && item.expected_rate === draft.rate
+      && (item.price_option ?? null) === draft.price_option
       && (item.comment ?? '') === draft.comment,
     );
   });

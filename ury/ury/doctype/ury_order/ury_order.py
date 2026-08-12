@@ -12,10 +12,11 @@ from erpnext.accounts.doctype.pos_invoice.pos_invoice import (
 from erpnext.controllers.queries import item_query
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt
+from frappe.utils import cint, flt
 
 from ury.ury.api.ury_kot_generate import kot_execute, process_items_for_cancel_kot
 from ury.ury_pos.api import (
+    _get_stock_details,
     get_draft_reserved_qty_map,
     get_pos_profile_for_current_branch,
     get_submitted_reserved_qty_map,
@@ -23,6 +24,19 @@ from ury.ury_pos.api import (
     getBranchRoom,
 )
 from ury.ury_pos.cashier import get_single_cashier_opening
+from ury.ury_pos.price_options import (
+    OPTION_FIELD,
+    OPTION_LABEL_FIELD,
+    STANDARD_OPTION_ID,
+    apply_price_option_to_row,
+    get_menu_promotions,
+    group_menu_promotions,
+    lock_invoice_price_options,
+    lock_menu_price_options_parent,
+    resolve_price_option,
+    validate_price_option_quantities,
+    validate_price_option_row_prices,
+)
 
 
 class URYOrder(Document):
@@ -142,7 +156,7 @@ def get_authoritative_menu_price_list(menu):
     return rows[0].name
 
 
-def get_authoritative_item_prices(item_codes, price_list):
+def get_authoritative_item_prices(item_codes, price_list, for_update=False):
     """Resolve exactly one selling Item Price per item for a Price List."""
     item_codes = list(dict.fromkeys(code for code in item_codes if code))
     if not price_list:
@@ -150,16 +164,34 @@ def get_authoritative_item_prices(item_codes, price_list):
     if not item_codes:
         return {}
 
-    rows = frappe.get_all(
-        "Item Price",
-        filters={
-            "item_code": ["in", item_codes],
-            "price_list": price_list,
-            "selling": 1,
-        },
-        fields=["name", "item_code", "price_list_rate"],
-        order_by="item_code, name",
-    )
+    if for_update:
+        rows = frappe.db.sql(
+            """
+            SELECT name, item_code, price_list_rate
+            FROM `tabItem Price`
+            WHERE item_code IN %(item_codes)s
+              AND price_list = %(price_list)s
+              AND selling = 1
+            ORDER BY item_code, name
+            FOR UPDATE
+            """,
+            {
+                "item_codes": tuple(sorted(item_codes)),
+                "price_list": price_list,
+            },
+            as_dict=True,
+        )
+    else:
+        rows = frappe.get_all(
+            "Item Price",
+            filters={
+                "item_code": ["in", item_codes],
+                "price_list": price_list,
+                "selling": 1,
+            },
+            fields=["name", "item_code", "price_list_rate"],
+            order_by="item_code, name",
+        )
     rows_by_item = {}
     for row in rows:
         rows_by_item.setdefault(row.item_code, []).append(row)
@@ -190,6 +222,268 @@ def get_authoritative_item_prices(item_codes, price_list):
     }
 
 
+def _get_locked_waiter_menu(
+    table,
+    room,
+    expected_menu,
+    item_codes,
+):
+    """Resolve and validate the current waiter menu under database locks.
+
+    Plain reads can keep returning an older snapshot under MariaDB's default
+    REPEATABLE READ isolation.  These locking reads therefore re-check the
+    table, its restaurant menu configuration and the requested menu rows after
+    the waiter transaction has acquired its opening/table locks and before it
+    locks the active invoice.
+    """
+    table_rows = frappe.db.sql(
+        """
+        SELECT name, restaurant, restaurant_room
+        FROM `tabURY Table`
+        WHERE name = %(table)s
+        FOR UPDATE
+        """,
+        {"table": table},
+        as_dict=True,
+    )
+    if not table_rows:
+        frappe.throw(
+            _("The selected table no longer exists. Reload the room and retry."),
+            frappe.TimestampMismatchError,
+            title=_("Table Changed"),
+        )
+    table_row = table_rows[0]
+    if table_row.restaurant_room != room or not table_row.restaurant:
+        frappe.throw(
+            _("The table room changed. Reload the room and retry."),
+            frappe.TimestampMismatchError,
+            title=_("Table Changed"),
+        )
+
+    restaurant_rows = frappe.db.sql(
+        """
+        SELECT name, active_menu, room_wise_menu
+        FROM `tabURY Restaurant`
+        WHERE name = %(restaurant)s
+        FOR UPDATE
+        """,
+        {"restaurant": table_row.restaurant},
+        as_dict=True,
+    )
+    if not restaurant_rows:
+        frappe.throw(
+            _("The table restaurant changed. Reload the room and retry."),
+            frappe.TimestampMismatchError,
+            title=_("Menu Changed"),
+        )
+    restaurant = restaurant_rows[0]
+
+    if cint(restaurant.room_wise_menu):
+        room_menu_rows = frappe.db.sql(
+            """
+            SELECT name, menu
+            FROM `tabMenu for Room`
+            WHERE parent = %(restaurant)s
+              AND room = %(room)s
+            ORDER BY name
+            FOR UPDATE
+            """,
+            {"restaurant": restaurant.name, "room": room},
+            as_dict=True,
+        )
+        current_menu = room_menu_rows[0].menu if room_menu_rows else None
+    else:
+        current_menu = restaurant.active_menu
+
+    if not current_menu or current_menu != expected_menu:
+        frappe.throw(
+            _("The table menu changed. Reload the room and retry."),
+            frappe.TimestampMismatchError,
+            title=_("Menu Changed"),
+        )
+
+    # The parent lock serialises menu edits even when no matching child row
+    # exists. Requested child rows are then locked in a stable order so all
+    # waiter writers acquire this part of the lock graph identically.
+    lock_menu_price_options_parent(current_menu)
+    item_codes = sorted(set(code for code in item_codes if code))
+    if not item_codes:
+        return current_menu
+    menu_items = frappe.db.sql(
+        """
+        SELECT name, item, disabled
+        FROM `tabURY Menu Item`
+        WHERE parent = %(menu)s
+          AND item IN %(item_codes)s
+        ORDER BY name
+        FOR UPDATE
+        """,
+        {"menu": current_menu, "item_codes": tuple(item_codes)},
+        as_dict=True,
+    )
+    enabled_items = {
+        row.item for row in menu_items if not cint(row.disabled)
+    }
+    unavailable = [code for code in item_codes if code not in enabled_items]
+    if unavailable:
+        frappe.throw(
+            _(
+                "Items are no longer enabled in the active menu: {0}. "
+                "Reload the menu and retry."
+            ).format(
+                ", ".join(frappe.bold(code) for code in unavailable)
+            ),
+            frappe.TimestampMismatchError,
+            title=_("Menu Item Changed"),
+        )
+
+    item_rows = frappe.db.sql(
+        """
+        SELECT name, disabled
+        FROM `tabItem`
+        WHERE name IN %(item_codes)s
+        ORDER BY name
+        FOR UPDATE
+        """,
+        {"item_codes": tuple(item_codes)},
+        as_dict=True,
+    )
+    enabled_master_items = {
+        row.name for row in item_rows if not cint(row.disabled)
+    }
+    unavailable = [
+        code for code in item_codes if code not in enabled_master_items
+    ]
+    if unavailable:
+        frappe.throw(
+            _(
+                "Items are no longer enabled: {0}. Reload the menu and retry."
+            ).format(
+                ", ".join(frappe.bold(code) for code in unavailable)
+            ),
+            frappe.TimestampMismatchError,
+            title=_("Item Changed"),
+        )
+
+    return current_menu
+
+
+def _get_locked_waiter_price_list(menu, expected_price_list):
+    """Lock and validate the Price List after the active invoice is locked."""
+    price_list_rows = frappe.db.sql(
+        """
+        SELECT name, enabled, selling, restaurant_menu
+        FROM `tabPrice List`
+        WHERE name = %(price_list)s
+        FOR UPDATE
+        """,
+        {"price_list": expected_price_list},
+        as_dict=True,
+    )
+    price_list = price_list_rows[0] if price_list_rows else None
+    if (
+        not price_list
+        or not cint(price_list.enabled)
+        or not cint(price_list.selling)
+        or price_list.restaurant_menu != menu
+    ):
+        frappe.throw(
+            _(
+                "The active menu Price List changed. Reload the menu and retry."
+            ),
+            frappe.TimestampMismatchError,
+            title=_("Price List Changed"),
+        )
+    return price_list.name
+
+
+def _get_locked_waiter_item_prices(
+    menu,
+    item_codes,
+    price_list,
+    expected_item_prices,
+    items=None,
+):
+    """Re-read waiter prices after locking the menu pricing configuration."""
+    lock_menu_price_options_parent(menu)
+    _get_locked_waiter_price_list(menu, price_list)
+    item_codes = list(dict.fromkeys(code for code in item_codes if code))
+    current_prices = get_authoritative_item_prices(
+        item_codes, price_list, for_update=True
+    )
+    changed = [
+        item_code
+        for item_code in item_codes
+        if item_code not in expected_item_prices
+        or item_code not in current_prices
+        or flt(expected_item_prices[item_code]) != flt(current_prices[item_code])
+    ]
+    if changed:
+        frappe.throw(
+            _(
+                "Item price changed while registering this order: {0}. "
+                "Reload the menu and retry."
+            ).format(
+                ", ".join(frappe.bold(item_code) for item_code in changed)
+            ),
+            frappe.TimestampMismatchError,
+            title=_("Item Price Changed"),
+        )
+    # Promotion details were shown before the transaction acquired the menu
+    # lock. Re-resolve every selected option against the locked rows and ensure
+    # its displayed rate still matches; base Item Price validation above alone
+    # cannot detect a promotion rate/id change.
+    if items and any(
+        item.get("_expected_option_rate") is not None
+        or (
+            item.get("price_option")
+            and item.get("price_option") != STANDARD_OPTION_ID
+        )
+        for item in items
+    ):
+        promotions_by_item = group_menu_promotions(
+            menu, item_codes, for_update=True
+        )
+        changed_options = []
+        for item in items:
+            item_code = item.get("item")
+            requested_option_id = item.get("price_option")
+            if requested_option_id and requested_option_id != STANDARD_OPTION_ID:
+                promotion = next(
+                    (
+                        row
+                        for row in promotions_by_item.get(item_code, [])
+                        if row.name == requested_option_id
+                    ),
+                    None,
+                )
+                option_rate = promotion.rate if promotion else None
+            else:
+                option_rate = current_prices[item_code]
+            expected_rate = item.get("_expected_option_rate")
+            if (
+                option_rate is None
+                or expected_rate is None
+                or flt(expected_rate) != flt(option_rate)
+            ):
+                changed_options.append(item_code)
+        if changed_options:
+            frappe.throw(
+                _(
+                    "Price option changed while registering this order: {0}. "
+                    "Reload the menu and retry."
+                ).format(
+                    ", ".join(
+                        frappe.bold(item_code)
+                        for item_code in sorted(set(changed_options))
+                    )
+                ),
+                frappe.TimestampMismatchError,
+                title=_("Price Option Changed"),
+            )
+    return current_prices
+
+
 def _append_server_priced_order_items(
     invoice,
     items,
@@ -209,27 +503,34 @@ def _append_server_priced_order_items(
     )
     if any(item_code not in prices for item_code in item_codes):
         frappe.throw(_("An authoritative price is missing for this waiter round."))
+    promotions_by_item = group_menu_promotions(
+        menu, item_codes, for_update=True
+    )
     for item in items:
         item_code = item.get("item")
         course = frappe.db.get_value(
             "URY Menu Item", {"item": item_code, "parent": menu}, "course"
         )
-        rate = prices[item_code]
+        price_option = resolve_price_option(
+            menu,
+            item_code,
+            item.get("price_option"),
+            prices[item_code],
+            promotions_by_item=promotions_by_item,
+        )
+        row_values = apply_price_option_to_row(
+            dict(
+                item_code=item_code,
+                item_name=item.get("item_name"),
+                qty=item.get("qty"),
+                **({"custom_course": course} if course else {}),
+                comment=item.get("comment"),
+                cost_center=cost_center,
+            ),
+            price_option,
+        )
         appended.append(
-            invoice.append(
-                "items",
-                dict(
-                    item_code=item_code,
-                    item_name=item.get("item_name"),
-                    qty=item.get("qty"),
-                    **({"custom_course": course} if course else {}),
-                    comment=item.get("comment"),
-                    rate=rate,
-                    price_list_rate=rate,
-                    base_price_list_rate=rate,
-                    cost_center=cost_center,
-                ),
-            )
+            invoice.append("items", row_values)
         )
     return appended
 
@@ -371,7 +672,11 @@ def _validate_order_stock(
     for item_code in sorted(ordered_qty):
         required_qty = flt(ordered_qty[item_code])
         if item_code in bundle_codes:
-            availability, _, _ = get_product_bundle_stock_availability(
+            (
+                availability,
+                _bundle_has_stock,
+                _bundle_allows_negative_stock,
+            ) = get_product_bundle_stock_availability(
                 item_code, warehouse, required_qty
             )
             for component in availability:
@@ -388,7 +693,11 @@ def _validate_order_stock(
                 )
             continue
 
-        availability, is_stock_item, _ = get_stock_availability(item_code, warehouse)
+        (
+            availability,
+            is_stock_item,
+            _allows_negative_stock,
+        ) = get_stock_availability(item_code, warehouse)
         if not is_stock_item:
             continue
 
@@ -404,12 +713,6 @@ def _validate_order_stock(
         )
 
     stock_item_codes = required_by_stock_item.keys()
-    draft_reserved = get_draft_reserved_qty_map(
-        stock_item_codes,
-        warehouse,
-        exclude_invoice=exclude_invoice,
-        for_update=True,
-    )
     if locked_bin_qty is not None:
         submitted_reserved = get_submitted_reserved_qty_map(
             stock_item_codes,
@@ -421,6 +724,12 @@ def _validate_order_stock(
             - flt(submitted_reserved.get(item_code))
             for item_code in stock_item_codes
         }
+    draft_reserved = get_draft_reserved_qty_map(
+        stock_item_codes,
+        warehouse,
+        exclude_invoice=exclude_invoice,
+        for_update=True,
+    )
     shortages = []
     for item_code in sorted(required_by_stock_item):
         required_qty = flt(required_by_stock_item[item_code])
@@ -514,7 +823,7 @@ def merge_tables_batch(anchor_table, tables):
                 _("Cannot merge tables from different rooms.")
             )
 
-        target_cluster, _ = _get_merge_cluster(
+        target_cluster, _target_table_map = _get_merge_cluster(
             target
         )
 
@@ -806,7 +1115,7 @@ TABLE_RELEASE_FIELDS = {
 }
 
 
-def release_merge_cluster_tables(table_or_tables):
+def release_merge_cluster_tables(table_or_tables, commit=True):
 
     if isinstance(table_or_tables, (list, tuple, set)):
         cluster = list(table_or_tables)
@@ -821,7 +1130,8 @@ def release_merge_cluster_tables(table_or_tables):
             update_modified=False,
         )
 
-    frappe.db.commit()
+    if commit:
+        frappe.db.commit()
 
 @frappe.whitelist()
 def release_tables_after_print(invoice):
@@ -959,6 +1269,8 @@ def _copy_invoice_item_fields(item_row, qty):
         base_price_list_rate=item_row.base_price_list_rate,
         comment=item_row.get("comment"),
         custom_course=item_row.get("custom_course"),
+        custom_ury_price_option=item_row.get(OPTION_FIELD),
+        custom_ury_price_option_label=item_row.get(OPTION_LABEL_FIELD),
         cost_center=item_row.cost_center,
         uom=item_row.uom,
         conversion_factor=item_row.conversion_factor,
@@ -976,6 +1288,11 @@ def split_bill(source_invoice, items_to_move, customer=None):
 
     if source.docstatus != 0:
         frappe.throw(_("Only draft invoices can be split."))
+
+    # A split moves an existing reservation between two invoices. Keep the
+    # promotion row locked until both documents reflect the transfer so a
+    # concurrent order cannot observe the intermediate partition.
+    lock_invoice_price_options(source)
 
     move_map = {
         row["name"]: float(row["qty"])
@@ -1272,6 +1589,7 @@ def _sync_order(
     strict_invoice=False,
     expected_invoice_name=None,
     append_only=False,
+    expected_menu=None,
     expected_price_list=None,
     expected_item_prices=None,
 ):
@@ -1283,6 +1601,8 @@ def _sync_order(
     """
     if append_only and (not strict_invoice or not skip_kot):
         frappe.throw(_("Append-only mode requires strict invoice and KOT handling."))
+    if append_only and not expected_menu:
+        frappe.throw(_("Append-only mode requires an authoritative menu."))
     if append_only and not expected_price_list:
         frappe.throw(_("Append-only mode requires an authoritative Price List."))
     if append_only and not expected_item_prices:
@@ -1318,6 +1638,25 @@ def _sync_order(
         )
         if not locked_tables:
             frappe.throw(_("The selected table does not belong to your branch."))
+
+    # Match URY Menu's lock order (menu before open invoice). Price List and
+    # Item Price are deliberately validated later, after the invoice lock.
+    locked_waiter_menu = None
+    waiter_item_codes = []
+    if append_only:
+        if isinstance(items, str):
+            items = json.loads(items)
+        waiter_item_codes = list(
+            dict.fromkeys(
+                item.get("item") for item in items if item.get("item")
+            )
+        )
+        locked_waiter_menu = _get_locked_waiter_menu(
+            table,
+            room,
+            expected_menu,
+            waiter_item_codes,
+        )
 
     # Check if the last invoice was already billed
     if (
@@ -1459,7 +1798,7 @@ def _sync_order(
             "item_code": item.item_code,
             "item_name": item.item_name,
             "qty": item.qty,
-            "comments": "",
+            "comments": item.get("comment") or "",
         }
         past_item.append(previous_item)
         
@@ -1478,14 +1817,26 @@ def _sync_order(
         invoice.items = []
     
     if append_only:
-        menu = get_restaurant_and_menu_name(table)[1]
+        menu = locked_waiter_menu
+        # Lock before reading option rows or relying on Item Price values. A
+        # later child-only lock would protect a stale pricing snapshot and
+        # would not cover creation of the first promotion.
+        locked_item_prices = _get_locked_waiter_item_prices(
+            menu,
+            waiter_item_codes,
+            price_list,
+            expected_item_prices,
+            items=items,
+        )
+        for item in items:
+            item.pop("_expected_option_rate", None)
         appended_items = _append_server_priced_order_items(
             invoice,
             items,
             menu,
             price_list,
             pos_profile,
-            authoritative_prices=expected_item_prices,
+            authoritative_prices=locked_item_prices,
         )
         appended_item_price_snapshot = _snapshot_appended_item_prices(
             appended_items
@@ -1495,45 +1846,83 @@ def _sync_order(
         # Keep the established desktop/takeaway/aggregator behaviour intact:
         # the legacy path resolves the branch menu and uses the first matching
         # Item Price row exactly as it did before the waiter module existed.
-        menu = frappe.db.get_value("URY Menu", {"branch": invoice.branch}, "name")
+        promotion_menu = frappe.db.get_value(
+            "Price List", price_list, "restaurant_menu"
+        )
+        # Course lookup still needs the operational branch menu when a Price
+        # List has no explicit menu, but promotions belong only to a Price List
+        # explicitly bound to its URY Menu. Preserve the legacy lookup against
+        # the invoice branch instead of deriving it again from the session user.
+        menu = promotion_menu or frappe.db.get_value(
+            "URY Menu", {"branch": invoice.branch}, "name"
+        )
+        if promotion_menu:
+            lock_menu_price_options_parent(promotion_menu)
+        requested_item_codes = list(dict.fromkeys(item.get("item") for item in items))
+        locked_promotion_base_rates = (
+            get_authoritative_item_prices(
+                requested_item_codes,
+                price_list,
+                for_update=True,
+            )
+            if promotion_menu
+            else {}
+        )
+        promotions_by_item = (
+            group_menu_promotions(
+                promotion_menu,
+                requested_item_codes,
+                for_update=True,
+            )
+            if promotion_menu
+            else {}
+        )
         for item in items:
             course = frappe.db.get_value(
                 "URY Menu Item",
                 {"item": item.get("item"), "parent": menu},
                 "course",
             )
-            item_prices = frappe.db.get_list(
-                "Item Price",
-                filters={
-                    "item_code": item.get("item"),
-                    "price_list": price_list,
-                },
-                fields=["price_list_rate"],
-            )
-            if not item_prices:
-                frappe.throw(
-                    _(
-                        "No item price found for Item: {0} in Price List: {1}. "
-                        "Please check the price list settings."
-                    ).format(item.get("item"), price_list)
+            if promotion_menu:
+                item_rate = flt(locked_promotion_base_rates[item.get("item")])
+            else:
+                item_prices = frappe.db.get_list(
+                    "Item Price",
+                    filters={
+                        "item_code": item.get("item"),
+                        "price_list": price_list,
+                    },
+                    fields=["price_list_rate"],
                 )
-            item_rate = item_prices[0].price_list_rate
-            invoice.append(
-                "items",
+                if not item_prices:
+                    frappe.throw(
+                        _(
+                            "No item price found for Item: {0} in Price List: {1}. "
+                            "Please check the price list settings."
+                        ).format(item.get("item"), price_list)
+                    )
+                item_rate = flt(item_prices[0].price_list_rate)
+            price_option = resolve_price_option(
+                promotion_menu,
+                item.get("item"),
+                item.get("price_option"),
+                item_rate,
+                promotions_by_item=promotions_by_item,
+            )
+            row_values = apply_price_option_to_row(
                 dict(
                     item_code=item.get("item"),
                     item_name=item.get("item_name"),
                     qty=item.get("qty"),
                     **({"custom_course": course} if course else {}),
                     comment=item.get("comment"),
-                    rate=item_rate,
-                    price_list_rate=item_rate,
-                    base_price_list_rate=item_rate,
                     cost_center=frappe.db.get_value(
                         "POS Profile", pos_profile, "cost_center"
                     ),
                 ),
+                price_option,
             )
+            invoice.append("items", row_values)
 
     # Populate warehouse/UOM conversion before validating the final payload.
     # The current invoice is excluded from draft reservations when it is edited,
@@ -1543,6 +1932,46 @@ def _sync_order(
     _assert_existing_order_items_unchanged(invoice, existing_item_snapshot)
     _assert_appended_item_prices_unchanged(appended_item_price_snapshot)
     ordered_qty = _aggregate_order_stock_qty(invoice.items)
+    # Every writer (including a normal-price line) locks the promotion rows
+    # before stock bins, so the reserved Normal/Promotion partition cannot race.
+    locked_price_options = (
+        get_menu_promotions(
+            promotion_menu,
+            list(ordered_qty),
+            enabled_only=False,
+            for_update=True,
+        )
+        if not append_only and promotion_menu
+        else get_menu_promotions(
+            menu,
+            list(ordered_qty),
+            enabled_only=False,
+            for_update=True,
+        )
+        if append_only
+        else []
+    )
+    active_promoted_item_codes = [
+        row.item for row in locked_price_options if cint(row.enabled)
+    ]
+    selected_promotional_item_codes = [
+        row.get("item_code")
+        for row in invoice.items
+        if row.get(OPTION_FIELD)
+        and row.get(OPTION_FIELD) != STANDARD_OPTION_ID
+    ]
+    price_option_item_codes = list(
+        dict.fromkeys(
+            active_promoted_item_codes + selected_promotional_item_codes
+        )
+    )
+    base_rates = (
+        get_authoritative_item_prices(
+            price_option_item_codes, price_list, for_update=True
+        )
+        if price_option_item_codes
+        else {}
+    )
     stock_lock_items = _get_stock_lock_item_codes(ordered_qty)
     locked_bin_qty = _lock_stock_bins(posprofile.warehouse, stock_lock_items)
     exclude_invoice = None if invoice.is_new() else invoice.name
@@ -1552,6 +1981,28 @@ def _sync_order(
         exclude_invoice=exclude_invoice,
         locked_bin_qty=locked_bin_qty,
     )
+    if price_option_item_codes:
+        physical_details = _get_stock_details(
+            price_option_item_codes,
+            posprofile.warehouse,
+            exclude_invoice=exclude_invoice,
+            for_update=True,
+        )
+        validate_price_option_quantities(
+            invoice.items,
+            promotion_menu if not append_only else menu,
+            base_rates,
+            {
+                item_code: details["available_qty"]
+                for item_code, details in physical_details.items()
+            },
+            exclude_invoice=exclude_invoice,
+        )
+        validate_price_option_row_prices(
+            invoice.items,
+            promotion_menu if not append_only else menu,
+            base_rates,
+        )
 
     waiter_price_list_flag = "ury_waiter_expected_price_list"
     previous_waiter_price_list = getattr(
@@ -1573,6 +2024,12 @@ def _sync_order(
                 waiter_price_list_flag,
                 previous_waiter_price_list,
             )
+    if price_option_item_codes:
+        validate_price_option_row_prices(
+            invoice.items,
+            promotion_menu if not append_only else menu,
+            base_rates,
+        )
     if append_only and invoice.selling_price_list != expected_price_list:
         frappe.throw(
             _(
@@ -1757,7 +2214,7 @@ def table_transfer(table, newTable, invoice):
     pos_invoice = frappe.get_doc("POS Invoice", invoice)
     new_table = frappe.get_doc("URY Table", newTable)
 
-    merge_members, _ = _get_merge_cluster(table)
+    merge_members, _table_map = _get_merge_cluster(table)
     if len(merge_members) > 1:
         frappe.throw(_("Table transfer is not allowed for merged tables. Unmerge first."))
 
@@ -1853,9 +2310,17 @@ def customer_favourite_item(customer_name):
 def cancel_order(invoice_id, reason):
     pos_invoice = frappe.get_doc("POS Invoice", invoice_id)
 
+    # Use the same promotion-row lock as order creation. This prevents a
+    # concurrent order from calculating its quota while this invoice is being
+    # released.
+    lock_invoice_price_options(pos_invoice)
+
     # Release the full merge cluster, not only the primary table and CSV partners.
     if pos_invoice.restaurant_table:
-        release_merge_cluster_tables(pos_invoice.restaurant_table)
+        release_merge_cluster_tables(
+            pos_invoice.restaurant_table,
+            commit=False,
+        )
 
     try:
         cancel_kot(invoice_id)
@@ -1977,6 +2442,7 @@ def cancel_kot(invoice_id):
             "item_code": item.get("item", item.get("item_code")),
             "qty": item.qty,
             "item_name": item.item_name,
+            "comments": item.get("comment") or "",
         }
         items.append(order_item)
 
