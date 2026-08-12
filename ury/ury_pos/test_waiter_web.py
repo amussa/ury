@@ -79,8 +79,10 @@ class TestWaiterGuestLoginBoundary(TestCase):
     def test_login_and_session_basics_are_the_only_extra_allowed_methods(self):
         self.assertIn("login", ALLOWED_WAITER_METHODS)
         self.assertIn("logout", ALLOWED_WAITER_METHODS)
+        self.assertIn("web_logout", ALLOWED_WAITER_METHODS)
         self.assertIn("frappe.auth.get_logged_user", ALLOWED_WAITER_METHODS)
         self.assertTrue(_is_allowed_waiter_request("/api/method/login", "login"))
+        self.assertTrue(_is_allowed_waiter_request("/", "web_logout"))
         self.assertFalse(
             _is_allowed_waiter_request(
                 "/api/method/frappe.client.set_value",
@@ -133,6 +135,15 @@ class TestWaiterPWAResponses(TestCase):
                 self.assertIn("private", response.headers["Cache-Control"])
                 self.assertIn("no-store", response.headers["Cache-Control"])
                 self.assertIn("Cookie", response.headers["Vary"])
+
+        response = response_with()
+        with patch.object(frappe, "form_dict", {"cmd": "web_logout"}):
+            set_waiter_response_headers(
+                response, SimpleNamespace(path="/")
+            )
+        self.assertIn("private", response.headers["Cache-Control"])
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertIn("Cookie", response.headers["Vary"])
 
     def test_legacy_cmd_waiter_api_is_never_cached(self):
         response = response_with()

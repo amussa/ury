@@ -25,7 +25,7 @@ WAITER_SESSION_PATHS = frozenset(
     }
 )
 WAITER_SESSION_METHODS = frozenset(
-    {"login", "logout", "frappe.auth.get_logged_user"}
+    {"login", "logout", "web_logout", "frappe.auth.get_logged_user"}
 )
 WAITER_PRIVATE_METHODS = WAITER_API_METHODS | WAITER_SESSION_METHODS
 

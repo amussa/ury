@@ -1336,6 +1336,10 @@ class TestWaiterDedicatedRoleSecurity(TestCase):
         self.assertIn("frappe.auth.get_logged_user", ALLOWED_WAITER_METHODS)
         self.assertIn("login", ALLOWED_WAITER_METHODS)
         self.assertIn("logout", ALLOWED_WAITER_METHODS)
+        self.assertIn("web_logout", ALLOWED_WAITER_METHODS)
+        self.assertTrue(
+            _is_allowed_waiter_request("/", "web_logout")
+        )
 
         for method in (
             "get_context",

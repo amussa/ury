@@ -20,6 +20,8 @@ ALLOWED_WAITER_METHODS = frozenset(
         "login",
         # frappe-js-sdk FrappeAuth.logout() posts to /api/method/logout.
         "logout",
+        # Frappe's website/portal user menu links to /?cmd=web_logout.
+        "web_logout",
     }
 )
 
