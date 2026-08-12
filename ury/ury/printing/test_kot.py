@@ -38,11 +38,18 @@ class TestKOTPrinting(TestCase):
 	@patch("ury.ury.printing.kot.socket.create_connection")
 	def test_connect_retries_before_any_bytes_are_sent(self, create_connection, sleep):
 		connection = MagicMock()
-		create_connection.side_effect = [TimeoutError("timed out"), OSError("offline"), connection]
+		create_connection.side_effect = [
+			TimeoutError("timed out"),
+			OSError("offline"),
+			TimeoutError("timed out"),
+			OSError("offline"),
+			TimeoutError("timed out"),
+			connection,
+		]
 
 		self.assertIs(_connect_escpos("192.168.18.2", 9100, 5), connection)
-		self.assertEqual(create_connection.call_count, 3)
-		self.assertEqual([entry.args[0] for entry in sleep.call_args_list], [1.0, 2.0])
+		self.assertEqual(create_connection.call_count, 6)
+		self.assertEqual([entry.args[0] for entry in sleep.call_args_list], [1.0, 2.0, 5.0, 5.0, 5.0])
 
 	@patch("ury.ury.printing.kot.time.sleep")
 	@patch("ury.ury.printing.kot.socket.create_connection", side_effect=TimeoutError("timed out"))
@@ -50,8 +57,8 @@ class TestKOTPrinting(TestCase):
 		with self.assertRaisesRegex(TimeoutError, "timed out"):
 			_connect_escpos("192.168.18.2", 9100, 5)
 
-		self.assertEqual(create_connection.call_count, 3)
-		self.assertEqual([entry.args[0] for entry in sleep.call_args_list], [1.0, 2.0])
+		self.assertEqual(create_connection.call_count, 6)
+		self.assertEqual([entry.args[0] for entry in sleep.call_args_list], [1.0, 2.0, 5.0, 5.0, 5.0])
 
 	@patch("ury.ury.printing.kot._sanitize_kot_text")
 	@patch("ury.ury.printing.kot.get_rendered_template")
