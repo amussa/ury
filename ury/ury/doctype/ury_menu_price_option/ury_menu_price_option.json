@@ -15,6 +15,7 @@
  ],
  "fields": [
   {
+   "columns": 2,
    "fieldname": "item",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -23,13 +24,16 @@
    "reqd": 1
   },
   {
+   "columns": 3,
    "fetch_from": "item.item_name",
    "fieldname": "item_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Item Name",
    "read_only": 1
   },
   {
+   "columns": 1,
    "default": "1",
    "fieldname": "enabled",
    "fieldtype": "Check",
@@ -37,6 +41,7 @@
    "label": "Enabled"
   },
   {
+   "columns": 1,
    "fieldname": "label",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -44,6 +49,7 @@
    "reqd": 1
   },
   {
+   "columns": 1,
    "fieldname": "rate",
    "fieldtype": "Currency",
    "in_list_view": 1,
@@ -52,6 +58,7 @@
    "reqd": 1
   },
   {
+   "columns": 2,
    "fieldname": "allocated_qty",
    "fieldtype": "Float",
    "in_list_view": 1,
