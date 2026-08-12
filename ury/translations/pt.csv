@@ -29,7 +29,7 @@ Price Option,Opção de preço
 "Item {0} can have only one active promotional price.","O artigo {0} só pode ter um preço promocional ativo."
 "Promotional quantities require a stock item: {0}.","As quantidades promocionais exigem um artigo de stock: {0}."
 "Serialised or batched items are not supported by promotional quantities: {0}.","Artigos serializados ou com lote não são suportados nas quantidades promocionais: {0}."
-"Promotional quantity for {0} must be greater than zero.","A quantidade promocional de {0} deve ser maior que zero."
+"Promotional quantity for {0} cannot be negative.","A quantidade promocional de {0} não pode ser negativa."
 "Promotional price for {0} must be lower than its normal price.","O preço promocional de {0} deve ser inferior ao preço normal."
 Every promotional price must have a label.,Cada preço promocional deve ter uma designação.
 "The item of saved price option {0} cannot be changed. Remove it and add a new option instead.","O artigo da opção de preço gravada {0} não pode ser alterado. Remova-a e crie uma nova opção."

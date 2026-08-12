@@ -55,9 +55,11 @@ class URYMenu(Document):
                         frappe.bold(option.item)
                     )
                 )
-            if flt(option.allocated_qty) <= 0:
+            # Zero keeps the configured promotion visible as sold out in POS
+            # and waiter; only a negative allocation is invalid.
+            if flt(option.allocated_qty) < 0:
                 frappe.throw(
-                    _("Promotional quantity for {0} must be greater than zero.").format(
+                    _("Promotional quantity for {0} cannot be negative.").format(
                         frappe.bold(option.item)
                     )
                 )

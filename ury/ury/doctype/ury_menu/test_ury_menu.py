@@ -16,6 +16,65 @@ def _raise_frappe(message, exc=frappe.ValidationError, **_kwargs):
 
 
 class TestURYMenu(FrappeTestCase):
+	@patch.object(URYMenu, "_protect_price_options_used_by_open_orders")
+	@patch("ury.ury.doctype.ury_menu.ury_menu.frappe.db.get_value")
+	def test_enabled_promotion_allows_zero_quantity(self, get_value, _protect):
+		get_value.return_value = frappe._dict(
+			is_stock_item=1,
+			has_serial_no=0,
+			has_batch_no=0,
+		)
+		menu = object.__new__(URYMenu)
+		menu.items = [
+			frappe._dict(item="CAKE-SLICE", rate=100, disabled=0)
+		]
+		menu.price_options = [
+			frappe._dict(
+				item="CAKE-SLICE",
+				enabled=1,
+				label="Promotion",
+				rate=75,
+				allocated_qty=0,
+			)
+		]
+
+		menu.validate_price_options()
+
+		self.assertEqual(menu.price_options[0].allocated_qty, 0)
+		self.assertEqual(menu.price_options[0].rate, 75)
+		self.assertEqual(menu.price_options[0].label, "Promotion")
+
+	@patch.object(URYMenu, "_protect_price_options_used_by_open_orders")
+	@patch("ury.ury.doctype.ury_menu.ury_menu.frappe.db.get_value")
+	def test_enabled_promotion_rejects_negative_quantity(self, get_value, _protect):
+		get_value.return_value = frappe._dict(
+			is_stock_item=1,
+			has_serial_no=0,
+			has_batch_no=0,
+		)
+		menu = object.__new__(URYMenu)
+		menu.items = [
+			frappe._dict(item="CAKE-SLICE", rate=100, disabled=0)
+		]
+		menu.price_options = [
+			frappe._dict(
+				item="CAKE-SLICE",
+				enabled=1,
+				label="Promotion",
+				rate=75,
+				allocated_qty=-1,
+			)
+		]
+
+		with patch(
+			"ury.ury.doctype.ury_menu.ury_menu.frappe.throw",
+			side_effect=_raise_frappe,
+		):
+			with self.assertRaisesRegex(
+				frappe.ValidationError, "cannot be negative"
+			):
+				menu.validate_price_options()
+
 	@patch("ury.ury.doctype.ury_menu.ury_menu.frappe.db.sql")
 	@patch("ury.ury.doctype.ury_menu.ury_menu.frappe.db.has_column", return_value=True)
 	def test_saved_price_option_item_is_immutable(self, _has_column, db_sql):

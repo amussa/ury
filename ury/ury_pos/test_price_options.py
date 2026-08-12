@@ -202,6 +202,49 @@ class TestPriceOptions(TestCase):
         self.assertEqual(options[0]["available_qty"], 5)
         self.assertEqual(options[1]["available_qty"], 0)
 
+    @patch("ury.ury_pos.price_options._get_used_promotion_qty", return_value={})
+    @patch("ury.ury_pos.price_options.group_menu_promotions")
+    def test_configured_zero_promotion_remains_visible_and_cannot_be_sold(
+        self, group_promotions, _get_used
+    ):
+        group_promotions.return_value = {
+            "CAKE-SLICE": [_promotion(allocated_qty=0)]
+        }
+        base_rates = {"CAKE-SLICE": 100}
+        physical_availability = {"CAKE-SLICE": 5}
+
+        options = get_item_price_options(
+            "Menu A",
+            base_rates,
+            physical_availability,
+        )["CAKE-SLICE"]
+
+        self.assertEqual(
+            [option["id"] for option in options],
+            [STANDARD_OPTION_ID, "PROMO-1"],
+        )
+        self.assertEqual(options[0]["available_qty"], 5)
+        self.assertEqual(options[1]["available_qty"], 0)
+
+        items = [
+            frappe._dict(
+                item_code="CAKE-SLICE",
+                qty=1,
+                conversion_factor=1,
+                custom_ury_price_option="PROMO-1",
+            )
+        ]
+        with patch(
+            "ury.ury_pos.price_options.frappe.throw", side_effect=_raise_frappe
+        ):
+            with self.assertRaises(frappe.ValidationError):
+                validate_price_option_quantities(
+                    items,
+                    "Menu A",
+                    base_rates,
+                    physical_availability,
+                )
+
     @patch(
         "ury.ury_pos.price_options._get_used_promotion_qty",
         return_value={"PROMO-1": -3},
