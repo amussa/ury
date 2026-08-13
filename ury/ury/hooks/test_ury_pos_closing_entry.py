@@ -116,7 +116,13 @@ def run_unit_tests():
 	if getattr(frappe.local, "flags", None) is None:
 		frappe.local.flags = frappe._dict()
 	stream = io.StringIO()
-	suite = defaultTestLoader.loadTestsFromModule(__import__(__name__, fromlist=["*"]))
+	suite = defaultTestLoader.loadTestsFromNames(
+		[
+			__name__,
+			"ury.ury.test_pos_closing_reconciliation",
+			"ury.ury.printing.test_pos_closing_format",
+		]
+	)
 	result = TextTestRunner(stream=stream, verbosity=2).run(suite)
 	if not result.wasSuccessful():
 		raise AssertionError(stream.getvalue())
