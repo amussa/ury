@@ -44,7 +44,7 @@ app_include_js = [
 page_js = {"point-of-sale": ["public/js/pos_extend.js"]}
 
 # include js in doctype views
-# doctype_js = {"POS Invoive" : "public/js/pos_print.js"}
+doctype_js = {"POS Closing Entry": "public/js/pos_closing_entry.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -351,6 +351,7 @@ fixtures = [
                     "POS Profile User-custom_main_cashier",
                     "POS Opening Entry-custom_rooms",
                     "POS Opening Entry-custom_sub_pos_close_entry",
+                    "POS Closing Entry-custom_difference_justification",
                     "POS Closing Entry Detail-custom_closing_amount",
                     "POS Profile-custom_edit_order_type",
                     "Printer Settings-kot_print_format_",

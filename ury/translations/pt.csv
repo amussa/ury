@@ -53,4 +53,14 @@ Invalid Promotional Return,Devolução promocional inválida
 "Promotional return does not match the original price option: {0}.","A devolução promocional não corresponde à opção de preço original: {0}."
 Promotional price options require a Price List linked to a URY Menu.,As opções de preço promocional exigem uma Lista de Preços ligada a um Menu URY.
 Invalid Price Option,Opção de preço inválida
+Closing Amount,Valor contado
+Difference Justification,Justificação da diferença
+Main Cashier Counted Amount,Valor contado pelo caixa principal
+Total Closing Amount,Total contado
+"Enter the counted amount for: {0}.","Introduza o valor contado para: {0}."
+"Enter the counted amount for {0}.","Introduza o valor contado para {0}."
+"Enter the main cashier counted amount for {0}.","Introduza o valor contado pelo caixa principal para {0}."
+"Explain the payment difference before saving or submitting this closing entry.","Justifique a diferença de pagamento antes de guardar ou submeter este fecho de caixa."
+"Required whenever at least one payment mode has a shortage or excess.","Obrigatório quando pelo menos um modo de pagamento apresenta falta ou excesso."
+"Explain the reason for the shortage or excess.","Explique o motivo da falta ou do excesso."
 "Price option label is invalid for: {0}. Reload the menu.","A designação da opção de preço é inválida para: {0}. Atualize o menu."
