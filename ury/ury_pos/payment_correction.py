@@ -194,6 +194,18 @@ def _validate_correction_state(invoices):
 					frappe.bold(invoice.name)
 				)
 			)
+		if invoice.get("custom_ury_settlement_type") == "House Offer":
+			frappe.throw(_("A House Offer has no payment method to correct."))
+		if (
+			abs(flt(invoice.get("change_amount"))) >= 0.01
+			or abs(flt(invoice.get("base_change_amount"))) >= 0.01
+		):
+			frappe.throw(
+				_(
+					"A commercial checkout payment with change cannot be reclassified. "
+					"Use an approved accounting correction procedure."
+				)
+			)
 
 	closing_entry = _get_open_closing_entry([invoice.name for invoice in invoices])
 	if closing_entry:

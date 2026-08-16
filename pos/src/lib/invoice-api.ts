@@ -16,7 +16,7 @@ export interface POSInvoice {
   total_taxes_and_charges: number;
   customer: string;
   customer_name?: string;
-  status: 'Draft' | 'Unbilled' | 'Recently Paid' | 'Paid' | 'Consolidated' | 'Return';
+  status: 'Draft' | 'Unbilled' | 'Recently Paid' | 'Paid' | 'Consolidated' | 'Return' | 'Unpaid' | 'Partly Paid' | 'Overdue';
   mobile_number: string;
   posting_date: string;
   rounded_total: number;
@@ -31,6 +31,17 @@ export interface POSInvoice {
   custom_merged_total?: number | null;
   discount_amount?: number;
   additional_discount_percentage?: number;
+  custom_ury_settlement?: string | null;
+  custom_ury_settlement_type?: 'Paid' | 'Partial Credit' | 'Full Credit' | 'House Offer' | null;
+  custom_ury_credit_amount?: number;
+  custom_ury_credit_due_date?: string | null;
+  custom_ury_credit_sales_invoice?: string | null;
+  custom_ury_manual_discount_total?: number;
+  paid_amount?: number;
+  change_amount?: number;
+  base_change_amount?: number;
+  outstanding_amount?: number;
+  due_date?: string | null;
 }
 
 export interface SplitGroupInvoice extends POSInvoice {
@@ -86,7 +97,7 @@ interface GetPOSInvoicesResponse {
 }
 
 interface GetPOSInvoicesParams {
-  status: POSInvoice['status'];
+  status: OrderStatusType;
   limit?: number;
   limit_start?: number;
   paid_limit?: number;
@@ -232,9 +243,18 @@ export function getOrdersTabForInvoice(
     restaurant_table: string | null;
     status: string;
     docstatus?: number;
+    custom_ury_settlement_type?: POSInvoice['custom_ury_settlement_type'];
   },
   options?: { paidLimit?: number; viewAllStatus?: number }
 ): OrderStatusType {
+  if (
+    inv.status === 'Unpaid'
+    || inv.status === 'Overdue'
+    || inv.custom_ury_settlement_type === 'Partial Credit'
+    || inv.custom_ury_settlement_type === 'Full Credit'
+  ) {
+    return 'Credit';
+  }
   const isPaid = inv.docstatus === 1 || inv.status === 'Paid';
   if (isPaid) {
     if (options?.paidLimit && options.paidLimit > 0) return 'Recently Paid';
@@ -270,6 +290,14 @@ export function mapSplitGroupInvoiceToPOSInvoice(inv: SplitGroupInvoice): POSInv
     split_siblings: inv.split_siblings,
     discount_amount: inv.discount_amount,
     additional_discount_percentage: inv.additional_discount_percentage,
+    custom_ury_settlement: inv.custom_ury_settlement,
+    custom_ury_settlement_type: inv.custom_ury_settlement_type,
+    custom_ury_credit_amount: inv.custom_ury_credit_amount,
+    custom_ury_credit_due_date: inv.custom_ury_credit_due_date,
+    custom_ury_manual_discount_total: inv.custom_ury_manual_discount_total,
+    paid_amount: inv.paid_amount,
+    outstanding_amount: inv.outstanding_amount,
+    due_date: inv.due_date,
   };
 }
 

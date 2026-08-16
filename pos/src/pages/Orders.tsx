@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Clock, User, UserCheck, Receipt, Printer, Pencil, X, GitBranch, GitMerge, RefreshCcw } from 'lucide-react';
+import { CalendarDays, Clock, CreditCard, Gift, User, UserCheck, Receipt, Printer, Pencil, X, GitBranch, GitMerge, RefreshCcw } from 'lucide-react';
 import { Badge, Button, Card, CardContent } from '@ury/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@ury/ui';
 import { showToast } from '@ury/ui';
@@ -11,6 +11,7 @@ import { Textarea } from '@ury/ui';
 import { usePOSStore } from '../store/pos-store';
 import { useNavigate } from 'react-router-dom';
 import PaymentDialog from '../components/PaymentDialog';
+import SettlementDialog from '../components/SettlementDialog';
 import BillSplitDialog from '../components/BillSplitDialog';
 import BillMergeDialog from '../components/BillMergeDialog';
 import OrderActionsMenu from '../components/OrderActionsMenu';
@@ -41,6 +42,18 @@ function getOrderTableLabel(order: Pick<POSInvoice, 'restaurant_table' | 'custom
 
 function isOrderEditable(status: string) {
   return status === 'Draft' || status === 'Unbilled' || status === 'Recently Paid';
+}
+
+function isCreditOrder(order: Pick<POSInvoice, 'status' | 'custom_ury_settlement_type'>) {
+  return order.status === 'Unpaid'
+    || order.status === 'Partly Paid'
+    || order.status === 'Overdue'
+    || order.custom_ury_settlement_type === 'Partial Credit'
+    || order.custom_ury_settlement_type === 'Full Credit';
+}
+
+function settlementTranslationKey(type: NonNullable<POSInvoice['custom_ury_settlement_type']>) {
+  return `settlement.types.${type.toLowerCase().replace(/ /g, '_')}`;
 }
 
 function isSplitBill(order: Pick<POSInvoice, 'split_total' | 'custom_split_group' | 'custom_split_from'>) {
@@ -111,6 +124,9 @@ export default function Orders() {
   const [showPaymentCorrectionDialog, setShowPaymentCorrectionDialog] = React.useState(false);
   const [orderActionsMenuOpen, setOrderActionsMenuOpen] = React.useState(false);
   const [isPrinting, setIsPrinting] = React.useState(false);
+  const commercialCheckoutEnabled = Number(
+    posStore.posProfile?.custom_ury_enable_commercial_checkout ?? 0
+  ) === 1;
 
   const canSplitBill = useMemo(() => {
     if (!selectedOrder || selectedOrderItems.length === 0) return false;
@@ -148,6 +164,10 @@ export default function Orders() {
 
   const canCorrectSelectedPayment = useMemo(() => {
     if (!selectedOrder || selectedOrder.status !== 'Paid' || !user) return false;
+    if (selectedOrder.custom_ury_settlement_type === 'House Offer') return false;
+    if ((selectedOrder.paid_amount ?? 0) <= 0) return false;
+    if (Math.abs(selectedOrder.change_amount ?? 0) >= 0.01
+      || Math.abs(selectedOrder.base_change_amount ?? 0) >= 0.01) return false;
     return (
       user.name === 'Administrator' ||
       user.name === selectedOrder.waiter ||
@@ -202,6 +222,11 @@ export default function Orders() {
         return 'default';
       case 'Return':
         return 'destructive';
+      case 'Unpaid':
+      case 'Partly Paid':
+        return 'warning';
+      case 'Overdue':
+        return 'danger';
       default:
         return 'default';
     }
@@ -451,6 +476,11 @@ export default function Orders() {
                 const cardTotal = mergedBill
                   ? order.rounded_total + Math.round(order.custom_merged_total ?? 0)
                   : order.rounded_total;
+                const creditOrder = isCreditOrder(order);
+                const creditBalance = Number(
+                  order.outstanding_amount ?? order.custom_ury_credit_amount ?? 0
+                );
+                const creditDueDate = order.custom_ury_credit_due_date || order.due_date;
 
                 return (
                 <Card 
@@ -467,6 +497,21 @@ export default function Orders() {
                         {order.name}
                       </h3>
                       <div className="flex shrink-0 items-center gap-1">
+                        {order.custom_ury_settlement_type && (
+                          <Badge
+                            variant="outline"
+                            className={order.custom_ury_settlement_type === 'House Offer'
+                              ? 'shrink-0 gap-1 border-amber-300 bg-amber-50 text-amber-800'
+                              : creditOrder
+                                ? 'shrink-0 gap-1 border-violet-300 bg-violet-50 text-violet-800'
+                                : 'shrink-0'}
+                          >
+                            {order.custom_ury_settlement_type === 'House Offer'
+                              ? <Gift className="h-3 w-3" />
+                              : creditOrder ? <CreditCard className="h-3 w-3" /> : null}
+                            {t(settlementTranslationKey(order.custom_ury_settlement_type))}
+                          </Badge>
+                        )}
                         {mergedBill && (
                           <Badge
                             variant="outline"
@@ -534,6 +579,20 @@ export default function Orders() {
                         <span className="text-sm font-semibold text-gray-900 tabular-nums">
                           {formatCurrency(cardTotal)}
                         </span>
+                        {creditOrder && (
+                          <div className="mt-2 space-y-1 rounded-md bg-violet-50 p-2 text-xs text-violet-800">
+                            <div className="flex items-center justify-between gap-2">
+                              <span>{t('settlement.summary.credit_balance')}</span>
+                              <strong>{formatCurrency(creditBalance)}</strong>
+                            </div>
+                            {creditDueDate && (
+                              <div className="flex items-center gap-1">
+                                <CalendarDays className="h-3 w-3" />
+                                <span>{t('settlement.credit.due_date')}: {creditDueDate}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -734,6 +793,48 @@ export default function Orders() {
                 </div>
               </div>
 
+              {selectedOrder.custom_ury_settlement_type && (
+                <div className={`mb-6 rounded-lg border p-4 ${
+                  selectedOrder.custom_ury_settlement_type === 'House Offer'
+                    ? 'border-amber-300 bg-amber-50'
+                    : isCreditOrder(selectedOrder)
+                      ? 'border-violet-300 bg-violet-50'
+                      : 'border-gray-200 bg-gray-50'
+                }`}>
+                  <div className="flex items-center gap-2 font-semibold text-gray-900">
+                    {selectedOrder.custom_ury_settlement_type === 'House Offer'
+                      ? <Gift className="h-4 w-4 text-amber-700" />
+                      : <CreditCard className="h-4 w-4 text-violet-700" />}
+                    {t(settlementTranslationKey(selectedOrder.custom_ury_settlement_type))}
+                  </div>
+                  {isCreditOrder(selectedOrder) && (
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="block text-xs text-gray-500">{t('settlement.summary.paid_now')}</span>
+                        <strong>{formatCurrency(Number(selectedOrder.paid_amount ?? 0))}</strong>
+                      </div>
+                      <div>
+                        <span className="block text-xs text-gray-500">{t('settlement.summary.credit_balance')}</span>
+                        <strong className="text-violet-800">
+                          {formatCurrency(Number(
+                            selectedOrder.outstanding_amount
+                              ?? selectedOrder.custom_ury_credit_amount
+                              ?? 0
+                          ))}
+                        </strong>
+                      </div>
+                      {(selectedOrder.custom_ury_credit_due_date || selectedOrder.due_date) && (
+                        <div className="col-span-2 flex items-center gap-2 text-violet-800">
+                          <CalendarDays className="h-4 w-4" />
+                          {t('settlement.credit.due_date')}: {' '}
+                          {selectedOrder.custom_ury_credit_due_date || selectedOrder.due_date}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Order Items */}
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('order.items_title')}</h3>
@@ -799,7 +900,9 @@ export default function Orders() {
                     className="flex-1"
                     onClick={() => setShowPaymentDialog(true)}
                   >
-                    {t('order.payment')}
+                    {commercialCheckoutEnabled
+                      ? t('settlement.actions.open_checkout')
+                      : t('order.payment')}
                   </Button>
                 )}
                 {canCorrectSelectedPayment && (
@@ -828,7 +931,7 @@ export default function Orders() {
           </>
         )}
       </div>
-      {showPaymentDialog && selectedOrder && (
+      {showPaymentDialog && selectedOrder && !commercialCheckoutEnabled && (
         <PaymentDialog
           onClose={() => setShowPaymentDialog(false)}
           grandTotal={selectedOrderTotals.grandTotal}
@@ -857,6 +960,29 @@ export default function Orders() {
           }}
           discountPercentage={selectedOrder.additional_discount_percentage}
           discountAmount={selectedOrder.discount_amount}
+        />
+      )}
+      {showPaymentDialog && selectedOrder && commercialCheckoutEnabled && (
+        <SettlementDialog
+          open={showPaymentDialog}
+          onOpenChange={setShowPaymentDialog}
+          invoice={selectedOrder.name}
+          tableLabel={getOrderTableLabel(selectedOrder)}
+          onSettled={async () => {
+            clearSelectedOrder();
+            await fetchOrders();
+          }}
+          printSettledInvoice={(browserPrintWindow) => {
+            if (!posStore.posProfile) {
+              throw new Error(t('errors.pos_profile_not_loaded'));
+            }
+            return printOrder({
+              orderId: selectedOrder.name,
+              posProfile: posStore.posProfile,
+              printFormat: resolvePrintFormat(selectedOrder, posStore.posProfile.print_format),
+              browserPrintWindow,
+            }).then(() => undefined);
+          }}
         />
       )}
       {selectedOrder && (

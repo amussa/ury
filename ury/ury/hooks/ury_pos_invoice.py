@@ -1,6 +1,6 @@
 import frappe
-from datetime import datetime
-from frappe.utils import flt, get_time, now, now_datetime
+from frappe import _
+from frappe.utils import flt, get_datetime, get_time, now_datetime
 from ury.ury.doctype.ury_order.ury_order import release_merge_cluster_tables
 from ury.ury_pos.cashier import (
     POSOpeningError,
@@ -14,6 +14,10 @@ from ury.ury_pos.price_options import (
     lock_invoice_price_options,
     validate_pos_invoice_price_options,
 )
+
+
+CREDIT_SETTLEMENT_TYPES = {"Partial Credit", "Full Credit"}
+COMMERCIAL_TOLERANCE = 0.01
 
 
 def before_insert(doc, method):
@@ -32,12 +36,20 @@ def validate(doc, method):
 
 def before_submit(doc, method):
     assign_single_cashier_from_opening(doc)
+    validate_commercial_settlement(doc)
     calculate_and_set_times(doc, method)
     ro_reload_submit(doc, method)
 
 
 def before_cancel(doc, method):
     """Serialize quota release with concurrent price-option reservations."""
+    if doc.get("custom_ury_settlement"):
+        frappe.throw(
+            _(
+                "A commercially settled POS Invoice cannot be cancelled directly. "
+                "Use an approved accounting correction procedure."
+            )
+        )
     lock_invoice_price_options(doc)
 
 
@@ -124,13 +136,9 @@ def validate_customer(doc, method):
 
 
 def calculate_and_set_times(doc, method):
-    doc.arrived_time = doc.creation
-
-    current_time_str = now()
-    
-    current_time = datetime.strptime(current_time_str, "%Y-%m-%d %H:%M:%S.%f")
-    
-    time_difference = current_time - doc.creation
+    creation = get_datetime(doc.creation)
+    doc.arrived_time = creation
+    time_difference = now_datetime() - creation
     
     total_seconds = int(time_difference.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
@@ -138,6 +146,165 @@ def calculate_and_set_times(doc, method):
     
     formatted_spend_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     doc.total_spend_time = formatted_spend_time
+
+
+def validate_commercial_settlement(doc):
+    """Reject every short POS payment outside the authorised URY service.
+
+    ``allow_partial_payment`` is a profile-wide ERPNext switch.  Once credit is
+    enabled, Desk, legacy POS and direct API calls would otherwise be able to
+    submit an accidental short payment.  The request-scoped flag is set only by
+    ``ury.ury_pos.settlement.settle_invoice`` while the audited settlement and
+    its invoices are saved/submitted in one transaction.
+    """
+    if doc.get("is_return"):
+        original = None
+        if doc.get("return_against"):
+            original = frappe.db.get_value(
+                "POS Invoice",
+                doc.return_against,
+                [
+                    "custom_ury_settlement",
+                    "custom_ury_settlement_type",
+                    "consolidated_invoice",
+                    "pos_profile",
+                ],
+                as_dict=True,
+            )
+        if (
+            original
+            and original.custom_ury_settlement_type in CREDIT_SETTLEMENT_TYPES
+            and not original.consolidated_invoice
+        ):
+            frappe.throw(
+                _(
+                    "POS returns for credit sales are temporarily unavailable. "
+                    "Close the original sale and use an approved accounting "
+                    "correction procedure."
+                )
+            )
+
+        profile_names = {
+            profile_name
+            for profile_name in (
+                doc.get("pos_profile"),
+                original.get("pos_profile") if original else None,
+            )
+            if profile_name
+        }
+        commercial_checkout_enabled = any(
+            frappe.db.get_value(
+                "POS Profile",
+                profile_name,
+                "custom_ury_enable_commercial_checkout",
+            )
+            for profile_name in profile_names
+        )
+        if commercial_checkout_enabled or (original and original.custom_ury_settlement):
+            frappe.throw(
+                _(
+                    "POS returns are temporarily unavailable for this commercial "
+                    "checkout profile. Use an approved accounting correction procedure."
+                )
+            )
+        return
+
+    precision = 2
+    try:
+        precision = doc.precision("grand_total")
+    except Exception:
+        pass
+
+    # Match ERPNext's own POS total semantics.  ``rounded_total`` is normally
+    # the numeric value 0 when rounding is disabled, not ``None``.
+    total = flt(flt(doc.get("rounded_total")) or flt(doc.get("grand_total")), precision)
+    paid = flt(
+        sum(flt(row.get("amount")) for row in (doc.get("payments") or [])),
+        precision,
+    )
+    shortage = flt(max(total - paid, 0), precision)
+    settlement_type = doc.get("custom_ury_settlement_type")
+    settlement = doc.get("custom_ury_settlement")
+    active_settlement = getattr(frappe.flags, "ury_pos_settlement", None)
+
+    profile = None
+    if doc.get("pos_profile"):
+        profile = frappe.db.get_value(
+            "POS Profile",
+            doc.pos_profile,
+            [
+                "customer",
+                "allow_partial_payment",
+                "custom_ury_enable_commercial_checkout",
+                "custom_ury_enable_credit_sales",
+            ],
+            as_dict=True,
+        )
+
+    has_header_discount = bool(
+        flt(doc.get("additional_discount_percentage"))
+        or flt(doc.get("discount_amount"))
+    )
+    if (
+        profile
+        and profile.custom_ury_enable_commercial_checkout
+        and (not settlement or active_settlement != settlement)
+    ):
+        if has_header_discount:
+            frappe.throw(
+                _(
+                    "Manual discounts must be completed through the URY "
+                    "commercial checkout."
+                )
+            )
+        frappe.throw(
+            _(
+                "This POS Profile requires every invoice to be completed through "
+                "the URY commercial checkout."
+            )
+        )
+
+    if shortage < COMMERCIAL_TOLERANCE:
+        if settlement_type in CREDIT_SETTLEMENT_TYPES:
+            if (
+                settlement
+                and active_settlement == settlement
+                and flt(doc.get("custom_ury_credit_amount")) < COMMERCIAL_TOLERANCE
+            ):
+                # A merged agreement may consume all payments on one member
+                # while another member retains the audited aggregate credit.
+                return
+            frappe.throw(_("A credit settlement must retain an outstanding balance."))
+        return
+
+    if (
+        not settlement
+        or settlement_type not in CREDIT_SETTLEMENT_TYPES
+        or active_settlement != settlement
+    ):
+        frappe.throw(
+            _(
+                "A payment below the invoice total is allowed only through "
+                "Conceder crédito in the URY POS."
+            )
+        )
+
+    if not profile or not all(
+        (
+            profile.allow_partial_payment,
+            profile.custom_ury_enable_commercial_checkout,
+            profile.custom_ury_enable_credit_sales,
+        )
+    ):
+        frappe.throw(_("Credit sales are not enabled for this POS Profile."))
+    if not doc.get("customer") or doc.customer == profile.customer:
+        frappe.throw(_("Credit requires an identified customer."))
+    if not doc.get("custom_ury_credit_due_date"):
+        frappe.throw(_("Credit due date is required."))
+
+    allocated_credit = flt(doc.get("custom_ury_credit_amount"), precision)
+    if abs(allocated_credit - shortage) >= COMMERCIAL_TOLERANCE:
+        frappe.throw(_("The invoice outstanding does not match the credit agreement."))
 
 
 def table_status_delete(doc, method):

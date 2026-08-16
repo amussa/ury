@@ -13,3 +13,7 @@ class TestPOSClosingPrintFormat(TestCase):
 		self.assertIn("custom_difference_justification", HTML)
 		self.assertIn("Falta", HTML)
 		self.assertIn("Excesso", HTML)
+		self.assertIn("custom_ury_credit_sales", HTML)
+		self.assertIn("custom_ury_discount_total", HTML)
+		self.assertIn("OFERTAS DA CASA", HTML.upper())
+		self.assertIn("Crédito não é valor recebido em caixa", HTML)

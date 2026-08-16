@@ -23,6 +23,10 @@
     "loading_ury_pos": "Chargement de POS Vendas...",
     "please_wait_setup": "Veuillez patienter pendant que nous préparons tout"
   },
+  "screen_size": {
+    "secure_checkout_requires_desktop": "Le paiement commercial sécurisé n’est pas disponible dans l’ancien POS mobile. Utilisez ce POS sur une tablette ou un ordinateur d’au moins 1024 px de large.",
+    "checking_profile": "Vérification du profil POS actif. Utilisez une tablette ou un ordinateur pour continuer en toute sécurité."
+  },
   "header": {
     "search_placeholder_default": "Rechercher commandes, articles ou clients...",
     "search_placeholder_orders": "Rechercher des commandes",
@@ -349,6 +353,116 @@
     "recently_paid": "Payé récemment",
     "paid": "Payé",
     "consolidated": "Consolidé",
-    "return": "Retour"
+    "return": "Retour",
+    "unpaid": "Impayé",
+    "partly_paid": "Partiellement payé",
+    "overdue": "En retard",
+    "credit": "Crédit"
+  },
+  "settlement": {
+    "title": "Finaliser la vente",
+    "description": "Vérifiez et finalisez la facture {{invoice}}",
+    "loading": "Chargement du paiement sécurisé...",
+    "customer": {
+      "title": "Client",
+      "new_title": "Nouveau client",
+      "choose_existing": "Choisir un client existant",
+      "tax_id": "Identifiant fiscal (facultatif)",
+      "created_on_confirm": "Le client est créé uniquement lorsque la vente est finalisée avec succès.",
+      "real_customer_required": "Choisissez un client identifié pour accorder un crédit.",
+      "create_new": "Créer un nouveau client"
+    },
+    "discount": {
+      "amount_short": "Montant",
+      "disabled": "Les remises manuelles sont désactivées pour ce profil PDV.",
+      "items_title": "Remises sur les articles",
+      "items_help": "Sélectionnez une ou plusieurs lignes. Un montant représente la remise totale de la ligne.",
+      "select_item": "Remise sur {{item}}",
+      "item_base": "{{qty}} unité(s) · base {{amount}}",
+      "invoice_source": "Facture {{invoice}}",
+      "item_value": "Valeur de la remise pour {{item}}",
+      "invoice_title": "Remise sur la facture",
+      "invoice_help": "Appliquée après les remises sur les articles, à toute la facture.",
+      "invoice_value": "Valeur de la remise sur la facture"
+    },
+    "house_offer": {
+      "title": "Offert par la maison",
+      "description": "Applique une remise de 100 %, sans paiement, crédit, monnaie ni abandon de créance."
+    },
+    "credit": {
+      "disabled": "Les ventes à crédit sont désactivées pour ce profil PDV.",
+      "title": "Accorder un crédit",
+      "description": "Encaissez une partie maintenant ou laissez le client identifié payer plus tard.",
+      "due_date": "Date d'échéance",
+      "no_change": "Un paiement à crédit ne peut pas dépasser le total final et ne produit pas de monnaie."
+    },
+    "payment": {
+      "title": "Paiement immédiat",
+      "description": "Saisissez uniquement les montants réellement reçus pour chaque mode."
+    },
+    "summary": {
+      "title": "Vérification finale",
+      "original_subtotal": "Sous-total initial",
+      "price_option_reduction": "R\u00e9duction promotion/option de prix",
+      "before_manual_discount": "Total avant remise manuelle",
+      "manual_discount_effective": "Remise manuelle effective",
+      "item_discount": "Remises sur les articles",
+      "invoice_discount": "Remise sur la facture",
+      "taxes": "Taxes",
+      "adjustment": "Ajustement",
+      "final_total": "Total final",
+      "paid_now": "Payé maintenant",
+      "credit_balance": "Solde à crédit",
+      "change": "Monnaie",
+      "customer": "Client responsable"
+    },
+    "preview": {
+      "calculating": "Calcul sur le serveur...",
+      "current": "Montants vérifiés par le serveur.",
+      "waiting": "Renseignez les informations obligatoires pour vérifier les montants."
+    },
+    "types": {
+      "paid": "Payé",
+      "partial_credit": "Partiellement payé / Crédit",
+      "full_credit": "Crédit intégral",
+      "house_offer": "Offert par la maison"
+    },
+    "reason": {
+      "label": "Motif",
+      "placeholder": "Décrivez l'accord commercial ou le motif de la remise",
+      "help": "Obligatoire pour une remise, une offre ou une vente à crédit."
+    },
+    "actions": {
+      "open_checkout": "Finaliser la vente",
+      "pay": "Encaisser et finaliser",
+      "credit": "Accorder le crédit et finaliser",
+      "house_offer": "Enregistrer l'offre de la maison",
+      "processing": "Finalisation de la vente...",
+      "retry": "Réessayer en toute sécurité",
+      "server_authority": "Les totaux sont recalculés et validés par le serveur avant la soumission."
+    },
+    "errors": {
+      "context_failed": "Impossible de charger le paiement sécurisé.",
+      "feature_disabled": "Le paiement commercial est désactivé pour ce profil PDV.",
+      "credit_disabled": "Les ventes à crédit sont désactivées pour ce profil PDV.",
+      "due_date_required": "Indiquez la date d'échéance du crédit.",
+      "reason_required": "Indiquez le motif de la remise, de l'offre ou du crédit.",
+      "discount_value_required": "Saisissez une remise valide supérieure à zéro.",
+      "discount_exceeds_limit": "La remise ne peut pas dépasser {{limit}} %.",
+      "discount_exceeds_item": "La remise ne peut pas dépasser la valeur de {{item}}.",
+      "invoice_discount_exceeds_total": "La remise de la facture ne peut pas dépasser le total éligible.",
+      "invalid_payment": "Saisissez des montants de paiement valides et non négatifs.",
+      "preview_failed": "Impossible de calculer la vente.",
+      "duplicate_customer_phone": "Un client avec ce numéro de téléphone existe déjà. Recherchez et sélectionnez le client existant.",
+      "duplicate_customer_tax_id": "Un client avec cet identifiant fiscal existe déjà. Recherchez et sélectionnez le client existant.",
+      "refresh_failed": "La vente est finalisée, mais la liste des commandes n'a pas pu être actualisée.",
+      "settle_failed": "Impossible de finaliser la vente."
+    },
+    "success": {
+      "paid": "Vente payée avec succès",
+      "partial_credit": "Paiement partiel et crédit enregistrés avec succès",
+      "full_credit": "Vente à crédit enregistrée avec succès",
+      "house_offer": "Offre de la maison enregistrée avec succès"
+    }
   }
 }

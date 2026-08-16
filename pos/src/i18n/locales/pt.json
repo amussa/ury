@@ -2,6 +2,10 @@
   "common": {
     "loading": "A carregar...", "cancel": "Cancelar", "save": "Guardar", "apply": "Aplicar", "change": "Alterar", "all": "Todos", "no_options": "Sem opções", "searching": "A pesquisar...", "no_items_found": "Nenhum item encontrado", "try_adjusting_filters": "Tente ajustar os filtros ou o termo de pesquisa", "loading_tables": "A carregar mesas...", "loading_menu_items": "A carregar itens do menu...", "error_loading_menu_items": "Erro ao carregar itens do menu", "loading_rooms": "A carregar salas...", "no_rooms_found": "Nenhuma sala encontrada", "no_tables_found": "Nenhuma mesa encontrada", "select_table_title": "Selecionar mesa", "checking_pos_status": "A verificar o estado do POS...", "cancelling": "A cancelar...", "confirm_cancel": "Confirmar cancelamento", "loading_ury_pos": "A carregar o POS Vendas...", "please_wait_setup": "Aguarde enquanto preparamos tudo"
   },
+  "screen_size": {
+    "secure_checkout_requires_desktop": "O checkout comercial seguro não está disponível no POS móvel antigo. Use este POS num tablet ou computador com largura mínima de 1024px.",
+    "checking_profile": "A verificar o Perfil POS activo. Use um tablet ou computador para continuar com segurança."
+  },
   "header": {
     "search_placeholder_default": "Pesquisar pedidos, itens do menu ou clientes...", "search_placeholder_orders": "Pesquisar pedidos", "search_placeholder_menu": "Pesquisar menu", "switch_to_desk": "Ir para o Desk", "clear_cache": "Limpar cache", "logout": "Terminar sessão"
   },
@@ -50,5 +54,111 @@
     "special_instructions": "Instruções especiais", "special_instructions_placeholder": "Adicione instruções especiais ou notas para este item...", "quantity": "Quantidade", "variants": "Variantes", "addons": "Extras", "loading_addons": "A carregar extras...", "no_addons": "Sem extras", "total": "Total", "update_order": "Atualizar pedido", "add_to_order": "Adicionar ao pedido", "checking_stock": "A verificar stock...", "price_option": "Escolher preço", "normal_price": "Normal", "sold_out": "Esgotado", "option_available": "{{qty}} {{uom}} disponíveis"
   },
   "order_types": { "dine_in": "Na mesa", "take_away": "Take-away", "delivery": "Entrega", "phone_in": "Por telefone", "aggregators": "Agregadores" },
-  "order_status_types": { "draft": "Rascunho", "unbilled": "Não faturado", "recently_paid": "Pago recentemente", "paid": "Pago", "consolidated": "Consolidado", "return": "Devolução" }
+  "order_status_types": { "draft": "Rascunho", "unbilled": "Não faturado", "recently_paid": "Pago recentemente", "paid": "Pago", "consolidated": "Consolidado", "return": "Devolução", "unpaid": "Por pagar", "partly_paid": "Parcialmente pago", "overdue": "Vencido", "credit": "Crédito" },
+  "settlement": {
+    "title": "Concluir venda",
+    "description": "Reveja e conclua a factura {{invoice}}",
+    "loading": "A carregar o checkout seguro...",
+    "customer": {
+      "title": "Cliente",
+      "new_title": "Novo cliente",
+      "choose_existing": "Escolher existente",
+      "tax_id": "NUIT (opcional)",
+      "created_on_confirm": "O cliente só é criado quando a venda for concluída com sucesso.",
+      "real_customer_required": "Escolha um cliente identificado para conceder crédito.",
+      "create_new": "Criar novo cliente"
+    },
+    "discount": {
+      "amount_short": "Valor",
+      "disabled": "Os descontos manuais estão desactivados neste perfil POS.",
+      "items_title": "Descontos nos artigos",
+      "items_help": "Seleccione uma ou várias linhas. Um valor em MT é o desconto total da linha.",
+      "select_item": "Desconto em {{item}}",
+      "item_base": "{{qty}} unidade(s) · base {{amount}}",
+      "invoice_source": "Factura {{invoice}}",
+      "item_value": "Valor do desconto em {{item}}",
+      "invoice_title": "Desconto na factura",
+      "invoice_help": "Aplicado depois dos descontos nos artigos, sobre a factura inteira.",
+      "invoice_value": "Valor do desconto na factura"
+    },
+    "house_offer": {
+      "title": "Oferta da casa",
+      "description": "Aplica 100% de desconto, sem pagamento, crédito, troco ou write-off."
+    },
+    "credit": {
+      "disabled": "As vendas a crédito estão desactivadas neste perfil POS.",
+      "title": "Conceder crédito",
+      "description": "Receba uma parte agora ou permita que o cliente identificado pague tudo depois.",
+      "due_date": "Prazo de pagamento",
+      "no_change": "Num crédito, o pagamento não pode exceder o total final e não produz troco."
+    },
+    "payment": {
+      "title": "Pagamento agora",
+      "description": "Introduza apenas os valores realmente recebidos em cada meio."
+    },
+    "summary": {
+      "title": "Revisão final",
+      "original_subtotal": "Subtotal original",
+      "price_option_reduction": "Redu\u00e7\u00e3o Promo\u00e7\u00e3o/op\u00e7\u00e3o de pre\u00e7o",
+      "before_manual_discount": "Total antes do desconto manual",
+      "manual_discount_effective": "Desconto manual efectivo",
+      "item_discount": "Desconto nos artigos",
+      "invoice_discount": "Desconto na factura",
+      "taxes": "Impostos",
+      "adjustment": "Ajuste",
+      "final_total": "Total final",
+      "paid_now": "Pago agora",
+      "credit_balance": "Saldo a crédito",
+      "change": "Troco",
+      "customer": "Cliente responsável"
+    },
+    "preview": {
+      "calculating": "A calcular no servidor...",
+      "current": "Valores verificados pelo servidor.",
+      "waiting": "Preencha os dados obrigatórios para verificar os valores."
+    },
+    "types": {
+      "paid": "Pago",
+      "partial_credit": "Pago parcialmente / Crédito",
+      "full_credit": "Crédito integral",
+      "house_offer": "Oferta da casa"
+    },
+    "reason": {
+      "label": "Motivo",
+      "placeholder": "Descreva o acordo comercial ou o motivo do desconto",
+      "help": "Obrigatório para desconto, oferta da casa ou venda a crédito."
+    },
+    "actions": {
+      "open_checkout": "Concluir venda",
+      "pay": "Receber e concluir",
+      "credit": "Conceder crédito e concluir",
+      "house_offer": "Registar oferta da casa",
+      "processing": "A concluir venda...",
+      "retry": "Tentar novamente com segurança",
+      "server_authority": "Os totais são recalculados e validados pelo servidor antes da submissão."
+    },
+    "errors": {
+      "context_failed": "Não foi possível carregar o checkout seguro.",
+      "feature_disabled": "O checkout comercial está desactivado neste perfil POS.",
+      "credit_disabled": "As vendas a crédito estão desactivadas neste perfil POS.",
+      "due_date_required": "Indique o prazo de pagamento do crédito.",
+      "reason_required": "Indique o motivo do desconto, oferta ou crédito.",
+      "discount_value_required": "Introduza um desconto válido superior a zero.",
+      "discount_exceeds_limit": "O desconto não pode exceder {{limit}}%.",
+      "discount_exceeds_item": "O desconto não pode exceder o valor de {{item}}.",
+      "invoice_discount_exceeds_total": "O desconto da factura não pode exceder o total elegível.",
+      "invalid_payment": "Introduza valores de pagamento válidos e não negativos.",
+      "preview_failed": "Não foi possível calcular a venda.",
+      "duplicate_customer_phone": "Já existe um cliente com este número de telefone. Pesquise e seleccione o cliente existente.",
+      "duplicate_customer_tax_id": "Já existe um cliente com este NUIT. Pesquise e seleccione o cliente existente.",
+      "refresh_failed": "A venda foi concluída, mas não foi possível actualizar a lista de pedidos.",
+      "settle_failed": "Não foi possível concluir a venda."
+    },
+    "success": {
+      "paid": "Venda paga com sucesso",
+      "partial_credit": "Pagamento parcial e crédito registados com sucesso",
+      "full_credit": "Venda a crédito registada com sucesso",
+      "house_offer": "Oferta da casa registada com sucesso"
+    }
+  }
 }

@@ -1,7 +1,13 @@
 import { Monitor, Smartphone, ExternalLink } from 'lucide-react';
 import { Button } from '@ury/ui';
+import { t } from '../i18n';
 
-const ScreenSizeDialog = () => {
+interface ScreenSizeDialogProps {
+  profileReady: boolean;
+  allowLegacyPOS: boolean;
+}
+
+const ScreenSizeDialog = ({ profileReady, allowLegacyPOS }: ScreenSizeDialogProps) => {
   const handleSwitchToVersion1 = () => {
     // Get the current domain and open /urypos in a new tab
     const currentDomain = window.location.origin;
@@ -46,18 +52,28 @@ const ScreenSizeDialog = () => {
           </div>
           
           {/* Alternative Option */}
-          <div className="bg-blue-50 rounded-lg p-4 mb-6">
-            <p className="text-sm text-blue-800 mb-3">
-              You can use POS Vendas mobile version for mobile devices.
-            </p>
-            <Button
-              onClick={handleSwitchToVersion1}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
-            >
-              <ExternalLink className="w-4 h-4 mr-2" />
-              Switch to Version 1
-            </Button>
-          </div>
+          {allowLegacyPOS ? (
+            <div className="bg-blue-50 rounded-lg p-4 mb-6">
+              <p className="text-sm text-blue-800 mb-3">
+                You can use POS Vendas mobile version for mobile devices.
+              </p>
+              <Button
+                onClick={handleSwitchToVersion1}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
+              >
+                <ExternalLink className="w-4 h-4 mr-2" />
+                Switch to Version 1
+              </Button>
+            </div>
+          ) : (
+            <div className="bg-amber-50 rounded-lg p-4 mb-6">
+              <p className="text-sm font-medium text-amber-900">
+                {profileReady
+                  ? t('screen_size.secure_checkout_requires_desktop')
+                  : t('screen_size.checking_profile')}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

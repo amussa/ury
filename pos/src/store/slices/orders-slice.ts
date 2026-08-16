@@ -1,36 +1,16 @@
 import { StateCreator } from 'zustand';
-import { OrderType } from '../../data/order-types';
+import { OrderStatusType } from '../../data/order-types';
 import { call } from '@ury/core';
-import { getPOSInvoices, getPOSInvoiceItems, getSplitGroup, mapSplitGroupInvoiceToPOSInvoice, POSInvoiceItem, POSInvoiceTax } from '../../lib/invoice-api';
+import {
+  getPOSInvoices,
+  getPOSInvoiceItems,
+  getSplitGroup,
+  mapSplitGroupInvoiceToPOSInvoice,
+  POSInvoice,
+  POSInvoiceItem,
+  POSInvoiceTax,
+} from '../../lib/invoice-api';
 import { searchPosInvoice } from '../../lib/invoice-api';
-
-export interface POSInvoice {
-  name: string;
-  invoice_printed: number;
-  grand_total: number;
-  restaurant_table: string | null;
-  cashier: string;
-  waiter: string;
-  net_total: number;
-  posting_time: string;
-  total_taxes_and_charges: number;
-  customer: string;
-  status: 'Draft' | 'Unbilled' | 'Recently Paid' | 'Paid' | 'Consolidated' | 'Return';
-  mobile_number: string;
-  posting_date: string;
-  rounded_total: number;
-  order_type: OrderType;
-  custom_merged_tables?: string | null;
-  custom_split_group?: string | null;
-  custom_split_from?: string | null;
-  split_index?: number;
-  split_total?: number;
-  split_siblings?: string[];
-  custom_merged_pos_invoice?: string | null;
-  custom_merged_total?: number | null;
-  additional_discount_percentage?: number;
-  discount_amount?: number;
-}
 
 export interface OrdersState {
   orders: POSInvoice[];
@@ -41,7 +21,7 @@ export interface OrdersState {
     hasNextPage: boolean;
     itemsPerPage: number;
   };
-  selectedStatus: 'Draft' | 'Unbilled' | 'Recently Paid' | 'Paid' | 'Consolidated' | 'Return';
+  selectedStatus: OrderStatusType;
   selectedOrder: POSInvoice | null;
   selectedOrderItems: POSInvoiceItem[];
   selectedOrderTaxes: POSInvoiceTax[];
@@ -55,7 +35,7 @@ export interface OrdersActions {
   updateOrderStatus: (orderId: string, status: POSInvoice['status']) => Promise<void>;
   goToNextPage: () => Promise<void>;
   goToPreviousPage: () => Promise<void>;
-  setSelectedStatus: (status: POSInvoice['status']) => Promise<void>;
+  setSelectedStatus: (status: OrderStatusType) => Promise<void>;
   selectOrder: (order: POSInvoice) => Promise<void>;
   clearSelectedOrder: () => void;
   setOrderSearchQuery: (query: string) => void;
@@ -226,4 +206,4 @@ export const createOrdersSlice: StateCreator<
   },
 
   setOrderSearchQuery: (query) => set({ orderSearchQuery: query }),
-}); 
+});

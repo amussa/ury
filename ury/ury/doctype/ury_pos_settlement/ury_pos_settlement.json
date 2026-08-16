@@ -1,0 +1,322 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "URY-SET-.YYYY.-.#####",
+ "creation": "2026-08-16 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "context_section",
+  "pos_profile",
+  "branch",
+  "pos_opening_entry",
+  "company",
+  "context_column",
+  "customer_original",
+  "customer",
+  "settlement_type",
+  "currency",
+  "totals_section",
+  "total_catalogue",
+  "price_option_reduction",
+  "total_before_manual_discount",
+  "item_discount_total",
+  "totals_column",
+  "invoice_discount_total",
+  "manual_discount_total",
+  "grand_total",
+  "paid_now",
+  "credit_section",
+  "credit_amount",
+  "due_date",
+  "credit_column",
+  "reason",
+  "audit_section",
+  "settled_by",
+  "settled_at",
+  "audit_column",
+  "idempotency_key",
+  "revision_hash",
+  "invoices_section",
+  "invoices",
+  "discounts_section",
+  "discount_lines"
+ ],
+ "fields": [
+  {
+   "fieldname": "context_section",
+   "fieldtype": "Section Break",
+   "label": "POS Context"
+  },
+  {
+   "fieldname": "pos_profile",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "POS Profile",
+   "options": "POS Profile",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Branch",
+   "options": "Branch",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "pos_opening_entry",
+   "fieldtype": "Link",
+   "label": "POS Opening Entry",
+   "options": "POS Opening Entry",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "context_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer_original",
+   "fieldtype": "Link",
+   "label": "Original Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Final Customer",
+   "options": "Customer",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "settlement_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Settlement Type",
+   "options": "Paid\nPartial Credit\nFull Credit\nHouse Offer",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "totals_section",
+   "fieldtype": "Section Break",
+   "label": "Commercial Totals"
+  },
+  {
+   "fieldname": "total_catalogue",
+   "fieldtype": "Currency",
+   "label": "Catalogue Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "price_option_reduction",
+   "fieldtype": "Currency",
+   "label": "Price Option Reduction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_before_manual_discount",
+   "fieldtype": "Currency",
+   "label": "Total Before Manual Discount",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_discount_total",
+   "fieldtype": "Currency",
+   "label": "Item Discount Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "totals_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "invoice_discount_total",
+   "fieldtype": "Currency",
+   "label": "Invoice Discount Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "manual_discount_total",
+   "fieldtype": "Currency",
+   "label": "Manual Discount Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Final Total",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "paid_now",
+   "fieldtype": "Currency",
+   "label": "Paid Now",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "credit_section",
+   "fieldtype": "Section Break",
+   "label": "Credit"
+  },
+  {
+   "fieldname": "credit_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Credit Amount",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.credit_amount > 0",
+   "fieldname": "due_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Due Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "credit_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "audit_section",
+   "fieldtype": "Section Break",
+   "label": "Audit"
+  },
+  {
+   "fieldname": "settled_by",
+   "fieldtype": "Link",
+   "label": "Settled By",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "settled_at",
+   "fieldtype": "Datetime",
+   "label": "Settled At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "audit_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "revision_hash",
+   "fieldtype": "Data",
+   "label": "Revision Hash",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "invoices_section",
+   "fieldtype": "Section Break",
+   "label": "POS Invoices"
+  },
+  {
+   "fieldname": "invoices",
+   "fieldtype": "Table",
+   "label": "POS Invoices",
+   "options": "URY POS Settlement Invoice",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "discounts_section",
+   "fieldtype": "Section Break",
+   "label": "Manual Discounts"
+  },
+  {
+   "fieldname": "discount_lines",
+   "fieldtype": "Table",
+   "label": "Manual Discounts",
+   "options": "URY POS Settlement Discount",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-08-16 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "URY",
+ "name": "URY POS Settlement",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "select": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "URY Manager",
+   "select": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "URY Cashier",
+   "select": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

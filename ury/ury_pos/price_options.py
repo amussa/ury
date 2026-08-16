@@ -14,6 +14,19 @@ from frappe.utils import flt
 OPTION_FIELD = "custom_ury_price_option"
 OPTION_LABEL_FIELD = "custom_ury_price_option_label"
 STANDARD_OPTION_ID = "standard"
+RATE_BEFORE_MANUAL_DISCOUNT_FIELD = "custom_ury_rate_before_manual_discount"
+PRICE_OPTION_REDUCTION_FIELD = "custom_ury_price_option_reduction"
+MANUAL_DISCOUNT_TYPE_FIELD = "custom_ury_manual_discount_type"
+MANUAL_DISCOUNT_INPUT_FIELD = "custom_ury_manual_discount_input"
+MANUAL_DISCOUNT_AMOUNT_FIELD = "custom_ury_manual_discount_amount"
+
+MANUAL_DISCOUNT_FIELDS = (
+    RATE_BEFORE_MANUAL_DISCOUNT_FIELD,
+    PRICE_OPTION_REDUCTION_FIELD,
+    MANUAL_DISCOUNT_TYPE_FIELD,
+    MANUAL_DISCOUNT_INPUT_FIELD,
+    MANUAL_DISCOUNT_AMOUNT_FIELD,
+)
 
 
 def lock_menu_price_options_parent(menu):
@@ -357,6 +370,69 @@ def apply_price_option_to_row(row, option):
     return row
 
 
+def _row_precision(row, fieldname, fallback=6):
+    precision = getattr(row, "precision", None)
+    if callable(precision):
+        try:
+            return precision(fieldname)
+        except Exception:
+            pass
+    return fallback
+
+
+def _has_manual_discount_snapshot(item):
+    return any(
+        item.get(fieldname) not in (None, "", 0, 0.0)
+        for fieldname in (
+            MANUAL_DISCOUNT_TYPE_FIELD,
+            MANUAL_DISCOUNT_INPUT_FIELD,
+            MANUAL_DISCOUNT_AMOUNT_FIELD,
+        )
+    )
+
+
+def get_expected_rate_after_manual_discount(item, option_rate):
+    """Rebuild a row's net rate from its authoritative option and audit fields.
+
+    A return value of ``option_rate`` means that the row has no manual
+    discount.  Incomplete or internally inconsistent audit fields return
+    ``None`` so callers can reject the row without ever accepting an arbitrary
+    browser-supplied rate.
+    """
+    option_rate = flt(option_rate)
+    if not _has_manual_discount_snapshot(item):
+        return option_rate
+
+    discount_type = item.get(MANUAL_DISCOUNT_TYPE_FIELD)
+    input_value = flt(item.get(MANUAL_DISCOUNT_INPUT_FIELD))
+    stored_amount = flt(item.get(MANUAL_DISCOUNT_AMOUNT_FIELD))
+    rate_before = flt(item.get(RATE_BEFORE_MANUAL_DISCOUNT_FIELD))
+    qty = flt(item.get("qty"))
+    if (
+        discount_type not in ("Percent", "Amount")
+        or qty <= 0
+        or input_value <= 0
+        or stored_amount <= 0
+        or rate_before != option_rate
+    ):
+        return None
+
+    amount_precision = _row_precision(item, "amount", 2)
+    if discount_type == "Percent":
+        if input_value > 100:
+            return None
+        expected_amount = flt(option_rate * qty * input_value / 100, amount_precision)
+    else:
+        expected_amount = flt(input_value, amount_precision)
+
+    maximum = flt(option_rate * qty, amount_precision)
+    if expected_amount > maximum or stored_amount != expected_amount:
+        return None
+
+    rate_precision = _row_precision(item, "rate", 6)
+    return flt(option_rate - (stored_amount / qty), rate_precision)
+
+
 def validate_price_option_quantities(
     invoice_items,
     menu,
@@ -415,8 +491,19 @@ def validate_price_option_quantities(
                 )
 
 
-def validate_price_option_row_prices(invoice_items, menu, base_rates):
-    """Ensure ERPNext validation did not rewrite an URY-selected price."""
+def validate_price_option_row_prices(
+    invoice_items,
+    menu,
+    base_rates,
+    manual_discounts_authorized=False,
+):
+    """Ensure ERPNext validation did not rewrite an URY-selected price.
+
+    Manual discounts are accepted only while the transactional settlement
+    service is saving the invoice.  Even in that narrow path, the effective
+    rate is rebuilt from the current Normal/Promotion option and the persisted
+    audit inputs; a caller can never whitelist a free-form ``rate``.
+    """
     promoted_codes = list(base_rates)
     promotions_by_item = group_menu_promotions(
         menu, promoted_codes, for_update=True
@@ -429,6 +516,11 @@ def validate_price_option_row_prices(invoice_items, menu, base_rates):
         if not raw_option_id and persisted_label:
             changed.append(item_code)
             continue
+        has_manual_discount = _has_manual_discount_snapshot(item)
+        if has_manual_discount and not manual_discounts_authorized:
+            changed.append(item_code)
+            continue
+
         if item_code not in promotions_by_item:
             persisted_option_id = raw_option_id
             if persisted_option_id and persisted_option_id != STANDARD_OPTION_ID:
@@ -438,18 +530,29 @@ def validate_price_option_row_prices(invoice_items, menu, base_rates):
                 and persisted_label not in (None, "", "Normal")
             ):
                 changed.append(item_code)
-            continue
+            option = frappe._dict(
+                id=None,
+                label=None,
+                rate=flt(base_rates[item_code]),
+                base_rate=flt(base_rates[item_code]),
+                is_standard=True,
+            )
+        else:
+            persisted_option_id = raw_option_id or STANDARD_OPTION_ID
+            option = resolve_price_option(
+                menu,
+                item_code,
+                persisted_option_id,
+                base_rates[item_code],
+                promotions_by_item=promotions_by_item,
+            )
+
         persisted_option_id = raw_option_id or STANDARD_OPTION_ID
-        option = resolve_price_option(
-            menu,
-            item_code,
-            persisted_option_id,
-            base_rates[item_code],
-            promotions_by_item=promotions_by_item,
-        )
         expected_label = option.label
+        expected_rate = get_expected_rate_after_manual_discount(item, option.rate)
         if (
-            flt(item.get("rate")) != flt(option.rate)
+            expected_rate is None
+            or flt(item.get("rate")) != flt(expected_rate)
             or flt(item.get("price_list_rate")) != flt(option.base_rate)
             or persisted_option_id != (option.id or STANDARD_OPTION_ID)
             or (
@@ -477,6 +580,10 @@ def _has_promotional_snapshot(items):
         and item.get(OPTION_FIELD) != STANDARD_OPTION_ID
         for item in items
     )
+
+
+def _has_manual_discount_snapshots(items):
+    return any(_has_manual_discount_snapshot(item) for item in items)
 
 
 def _get_pos_invoice_menu(invoice):
@@ -517,6 +624,11 @@ def _commercial_item_snapshot(items):
             flt(item.get("stock_qty")),
             flt(item.get("rate")),
             flt(item.get("price_list_rate")),
+            flt(item.get(RATE_BEFORE_MANUAL_DISCOUNT_FIELD)),
+            flt(item.get(PRICE_OPTION_REDUCTION_FIELD)),
+            item.get(MANUAL_DISCOUNT_TYPE_FIELD) or "",
+            flt(item.get(MANUAL_DISCOUNT_INPUT_FIELD)),
+            flt(item.get(MANUAL_DISCOUNT_AMOUNT_FIELD)),
         )
         for item in items
     )
@@ -564,6 +676,14 @@ def _validate_return_price_option_snapshots(invoice):
             changed.append(item.get("item_code"))
             continue
 
+        # ERPNext's return mapper respects ``no_copy`` on the URY audit
+        # fields.  Rehydrate a completely absent snapshot from the submitted
+        # source row before comparing it; partially supplied/tampered values
+        # are never overwritten and therefore still fail below.
+        if _has_manual_discount_snapshot(original_row) and not _has_manual_discount_snapshot(item):
+            for fieldname in MANUAL_DISCOUNT_FIELDS:
+                item[fieldname] = original_row.get(fieldname)
+
         original_option_id = original_row.get(OPTION_FIELD) or STANDARD_OPTION_ID
         if (
             item.get("item_code") != original_row.get("item_code")
@@ -573,6 +693,10 @@ def _validate_return_price_option_snapshots(invoice):
             or flt(item.get("rate")) != flt(original_row.get("rate"))
             or flt(item.get("price_list_rate"))
             != flt(original_row.get("price_list_rate"))
+            or any(
+                (item.get(fieldname) or "") != (original_row.get(fieldname) or "")
+                for fieldname in MANUAL_DISCOUNT_FIELDS
+            )
         ):
             changed.append(item.get("item_code"))
         returned_by_row[original_row_name] += abs(
@@ -629,9 +753,14 @@ def validate_pos_invoice_price_options(invoice):
     )
     menu = _get_pos_invoice_menu(invoice)
     if not menu:
-        if _has_promotional_snapshot(invoice.get("items", [])):
+        if _has_promotional_snapshot(invoice.get("items", [])) or _has_manual_discount_snapshots(
+            invoice.get("items", [])
+        ):
             frappe.throw(
-                _("Promotional price options require a Price List linked to a URY Menu."),
+                _(
+                    "Price options and manual discounts require a Price List linked "
+                    "to a URY Menu."
+                ),
                 title=_("Invalid Price Option"),
             )
         return
@@ -651,7 +780,12 @@ def validate_pos_invoice_price_options(invoice):
         if item.get(OPTION_FIELD)
         and item.get(OPTION_FIELD) != STANDARD_OPTION_ID
     }
-    protected_codes = sorted(active_codes | selected_codes)
+    manual_discount_codes = {
+        item.get("item_code")
+        for item in invoice.get("items", [])
+        if item.get("item_code") and _has_manual_discount_snapshot(item)
+    }
+    protected_codes = sorted(active_codes | selected_codes | manual_discount_codes)
     if not protected_codes:
         misleading_labels = [
             item.get("item_code")
@@ -677,17 +811,24 @@ def validate_pos_invoice_price_options(invoice):
             )
         return
 
+    # Once any line requires protected validation, every invoice row is passed
+    # to the price and quantity validators below. Fetch authoritative values
+    # for that same complete set; using only ``protected_codes`` leaves normal
+    # sibling rows absent and causes a KeyError on multi-item invoices when a
+    # single row receives a manual discount.
+    validation_codes = item_codes
+
     from ury.ury.doctype.ury_order.ury_order import get_authoritative_item_prices
     from ury.ury_pos.api import _get_stock_details
 
     base_rates = get_authoritative_item_prices(
-        protected_codes,
+        validation_codes,
         invoice.selling_price_list,
         for_update=True,
     )
     exclude_invoice = None if invoice.is_new() else invoice.name
     stock_details = _get_stock_details(
-        protected_codes,
+        validation_codes,
         _get_pos_profile_warehouse(invoice),
         exclude_invoice=exclude_invoice,
         for_update=True,
@@ -703,6 +844,13 @@ def validate_pos_invoice_price_options(invoice):
         physical_availability,
         exclude_invoice=exclude_invoice,
     )
+    settlement_name = invoice.get("custom_ury_settlement")
+    active_settlement = getattr(frappe.flags, "ury_pos_settlement", None)
     validate_price_option_row_prices(
-        invoice.get("items", []), menu, base_rates
+        invoice.get("items", []),
+        menu,
+        base_rates,
+        manual_discounts_authorized=bool(
+            settlement_name and active_settlement == settlement_name
+        ),
     )

@@ -38,7 +38,9 @@ class SubPOSClosing(Document):
             "POS Invoice",
             filters={
                 "docstatus": 1,
-                "status":"Paid",
+                "status": ["!=", "Consolidated"],
+                "pos_profile": self.pos_profile,
+                "consolidated_invoice": ["is", "not set"],
                 "posting_date": ["between", [self.period_start_date, self.period_end_date]],
                 "cashier":self.user
             },
@@ -69,14 +71,22 @@ class SubPOSClosing(Document):
     
     def on_submit(self):
         opening_entry = frappe.get_doc("POS Opening Entry", self.pos_opening_entry)
-        opening_entry.custom_sub_pos_close = self.name
-        opening_entry.status = "Closed"
+        # A sub-closing is an input to the main POS Closing Entry. Closing the
+        # opening here makes the standard main closing impossible, because
+        # ERPNext only accepts an Open POS Opening Entry.
+        opening_entry.custom_sub_pos_close_entry = self.name
         opening_entry.save()
     
     def on_cancel(self):
         opening_entry = frappe.get_doc("POS Opening Entry", self.pos_opening_entry)
-        opening_entry.custom_sub_pos_close = self.name
-        opening_entry.status = "Open"
+        if opening_entry.custom_sub_pos_close_entry == self.name:
+            opening_entry.custom_sub_pos_close_entry = None
+        main_closing_exists = frappe.db.exists(
+            "POS Closing Entry",
+            {"pos_opening_entry": self.pos_opening_entry, "docstatus": ["<", 2]},
+        )
+        if not main_closing_exists:
+            opening_entry.status = "Open"
         opening_entry.save()
 
 

@@ -23,6 +23,10 @@
     "loading_ury_pos": "Loading POS Vendas...",
     "please_wait_setup": "Please wait while we set things up"
   },
+  "screen_size": {
+    "secure_checkout_requires_desktop": "The secure commercial checkout is not available in the legacy mobile POS. Use this POS on a tablet or desktop with a width of at least 1024px.",
+    "checking_profile": "Checking the active POS Profile. Use a tablet or desktop to continue securely."
+  },
   "header": {
     "search_placeholder_default": "Search orders, menu items, or customers...",
     "search_placeholder_orders": "Search Orders",
@@ -349,6 +353,116 @@
     "recently_paid": "Recently Paid",
     "paid": "Paid",
     "consolidated": "Consolidated",
-    "return": "Return"
+    "return": "Return",
+    "unpaid": "Unpaid",
+    "partly_paid": "Partly paid",
+    "overdue": "Overdue",
+    "credit": "Credit"
+  },
+  "settlement": {
+    "title": "Complete sale",
+    "description": "Review and complete invoice {{invoice}}",
+    "loading": "Loading secure checkout...",
+    "customer": {
+      "title": "Customer",
+      "new_title": "New customer",
+      "choose_existing": "Choose existing",
+      "tax_id": "Tax ID (optional)",
+      "created_on_confirm": "The customer is only created when the sale is successfully completed.",
+      "real_customer_required": "Choose an identified customer to grant credit.",
+      "create_new": "Create a new customer"
+    },
+    "discount": {
+      "amount_short": "Amount",
+      "disabled": "Manual discounts are disabled for this POS profile.",
+      "items_title": "Item discounts",
+      "items_help": "Select one or more lines. An amount is the total discount for that line.",
+      "select_item": "Discount {{item}}",
+      "item_base": "{{qty}} unit(s) · base {{amount}}",
+      "invoice_source": "Invoice {{invoice}}",
+      "item_value": "Discount value for {{item}}",
+      "invoice_title": "Invoice discount",
+      "invoice_help": "Applied after item discounts, over the whole invoice.",
+      "invoice_value": "Invoice discount value"
+    },
+    "house_offer": {
+      "title": "House offer",
+      "description": "Apply a 100% discount, with no payment, credit, change or write-off."
+    },
+    "credit": {
+      "disabled": "Credit sales are disabled for this POS profile.",
+      "title": "Grant credit",
+      "description": "Receive part now or let the identified customer pay everything later.",
+      "due_date": "Due date",
+      "no_change": "Credit payments cannot exceed the final total and do not produce change."
+    },
+    "payment": {
+      "title": "Payment now",
+      "description": "Enter only amounts actually received in each payment method."
+    },
+    "summary": {
+      "title": "Final review",
+      "original_subtotal": "Original subtotal",
+      "price_option_reduction": "Promotion/price option reduction",
+      "before_manual_discount": "Total before manual discount",
+      "manual_discount_effective": "Effective manual discount",
+      "item_discount": "Item discounts",
+      "invoice_discount": "Invoice discount",
+      "taxes": "Taxes",
+      "adjustment": "Adjustment",
+      "final_total": "Final total",
+      "paid_now": "Paid now",
+      "credit_balance": "Credit balance",
+      "change": "Change",
+      "customer": "Responsible customer"
+    },
+    "preview": {
+      "calculating": "Calculating on the server...",
+      "current": "Amounts verified by the server.",
+      "waiting": "Complete the required information to verify the amounts."
+    },
+    "types": {
+      "paid": "Paid",
+      "partial_credit": "Part paid / Credit",
+      "full_credit": "Full credit",
+      "house_offer": "House offer"
+    },
+    "reason": {
+      "label": "Reason",
+      "placeholder": "Describe the commercial agreement or reason for the discount",
+      "help": "Required for a discount, house offer or credit sale."
+    },
+    "actions": {
+      "open_checkout": "Complete sale",
+      "pay": "Receive and complete",
+      "credit": "Grant credit and complete",
+      "house_offer": "Register house offer",
+      "processing": "Completing sale...",
+      "retry": "Retry safely",
+      "server_authority": "Totals are recalculated and validated by the server before submission."
+    },
+    "errors": {
+      "context_failed": "Failed to load the secure checkout.",
+      "feature_disabled": "The commercial checkout is disabled for this POS profile.",
+      "credit_disabled": "Credit sales are disabled for this POS profile.",
+      "due_date_required": "Enter the credit due date.",
+      "reason_required": "Enter a reason for the discount, offer or credit.",
+      "discount_value_required": "Enter a valid discount greater than zero.",
+      "discount_exceeds_limit": "The discount cannot exceed {{limit}}%.",
+      "discount_exceeds_item": "The discount cannot exceed the value of {{item}}.",
+      "invoice_discount_exceeds_total": "The invoice discount cannot exceed the eligible total.",
+      "invalid_payment": "Enter valid, non-negative payment amounts.",
+      "preview_failed": "Failed to calculate the sale.",
+      "duplicate_customer_phone": "A customer with this phone number already exists. Search for and select the existing customer.",
+      "duplicate_customer_tax_id": "A customer with this tax identifier already exists. Search for and select the existing customer.",
+      "refresh_failed": "The sale was completed, but the order list could not be refreshed.",
+      "settle_failed": "Failed to complete the sale."
+    },
+    "success": {
+      "paid": "Sale paid successfully",
+      "partial_credit": "Partial payment and credit registered successfully",
+      "full_credit": "Credit sale registered successfully",
+      "house_offer": "House offer registered successfully"
+    }
   }
 }

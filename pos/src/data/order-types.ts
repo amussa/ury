@@ -40,7 +40,7 @@ export const DINE_IN="Dine In"
 export const DEFAULT_ORDER_TYPE="Take Away"
 export const DEFAULT_PAYMENT_MODE="Cash"
 
-export type OrderStatusType = "Draft" | "Unbilled" | "Recently Paid" | "Paid" | "Consolidated" | "Return";
+export type OrderStatusType = "Draft" | "Unbilled" | "Recently Paid" | "Paid" | "Consolidated" | "Return" | "Credit";
 
 // Base status types that are always available
 export const BASE_ORDER_STATUS_TYPES = [
@@ -62,6 +62,14 @@ export const RECENTLY_PAID_STATUS_TYPE = [
     }
 ];
 
+// Operational filter for invoices with an outstanding URY credit agreement.
+export const CREDIT_STATUS_TYPE = [
+    {
+        label: "Credit",
+        value: "Credit"
+    }
+];
+
 // Extended status types that are only available when view_all_status is enabled
 export const EXTENDED_ORDER_STATUS_TYPES = [
     {
@@ -80,7 +88,7 @@ export const EXTENDED_ORDER_STATUS_TYPES = [
 
 // Function to get order status types based on POS profile settings
 export const getOrderStatusTypes = (viewAllStatus?: number, paidLimit?: number) => {
-    let statusTypes = [...BASE_ORDER_STATUS_TYPES];
+    const statusTypes = [...BASE_ORDER_STATUS_TYPES, ...CREDIT_STATUS_TYPE];
     
     // Add Recently Paid if paid_limit > 0
     if (paidLimit && paidLimit > 0) {

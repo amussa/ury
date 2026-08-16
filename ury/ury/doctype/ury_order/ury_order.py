@@ -2309,6 +2309,17 @@ def customer_favourite_item(customer_name):
 @frappe.whitelist()
 def cancel_order(invoice_id, reason):
     pos_invoice = frappe.get_doc("POS Invoice", invoice_id)
+    pos_invoice.check_permission("write")
+    if pos_invoice.docstatus != 0:
+        frappe.throw(_("Only a draft POS Invoice can be cancelled from Orders."))
+    if pos_invoice.get("custom_ury_settlement"):
+        frappe.throw(
+            _(
+                "A commercially settled POS Invoice cannot be cancelled from Orders."
+            )
+        )
+    if not (reason or "").strip():
+        frappe.throw(_("A cancellation reason is required."))
 
     # Use the same promotion-row lock as order creation. This prevents a
     # concurrent order from calculating its quota while this invoice is being
@@ -2345,6 +2356,21 @@ def cancel_order(invoice_id, reason):
 def make_invoice(customer, payments, cashier, pos_profile,owner, additionalDiscount=None, table=None, invoice=None):
     order_type =  invoice_name = frappe.get_value("POS Invoice",invoice , "order_type")
     invoice = get_order_invoice(table, invoice, order_type, "Payments")
+
+    # Once the audited checkout is enabled, the legacy endpoint must fail
+    # before changing customer, discounts or payments.  This also closes the
+    # old /urypos route and direct-API bypass for merged/short settlements.
+    if frappe.db.get_value(
+        "POS Profile",
+        invoice.pos_profile,
+        "custom_ury_enable_commercial_checkout",
+    ):
+        frappe.throw(
+            _(
+                "This POS Profile requires the URY commercial checkout. "
+                "Reload the current POS and complete the order there."
+            )
+        )
 
     if table:
         restaurant = get_restaurant_and_menu_name(table)

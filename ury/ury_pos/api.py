@@ -748,6 +748,147 @@ def _enrich_split_group_meta(invoices):
     return invoices
 
 
+COMMERCIAL_INVOICE_FIELDS = [
+    "name",
+    "consolidated_invoice",
+    "paid_amount",
+    "change_amount",
+    "base_change_amount",
+    "outstanding_amount",
+    "due_date",
+    "custom_ury_settlement",
+    "custom_ury_settlement_type",
+    "custom_ury_credit_amount",
+    "custom_ury_credit_due_date",
+    "custom_ury_manual_discount_total",
+]
+
+
+def _enrich_commercial_meta(invoices):
+    """Attach URY settlement metadata to every operational history query."""
+    names = [row.get("name") for row in invoices if row.get("name")]
+    if not names:
+        return invoices
+    metadata = frappe.get_all(
+        "POS Invoice",
+        filters={"name": ["in", names]},
+        fields=COMMERCIAL_INVOICE_FIELDS,
+    )
+    by_name = {row.name: row for row in metadata}
+    credit_settlements = {
+        row.custom_ury_settlement
+        for row in metadata
+        if row.get("consolidated_invoice")
+        and row.get("custom_ury_settlement")
+        and row.get("custom_ury_settlement_type") in ("Partial Credit", "Full Credit")
+    }
+    receivables = (
+        frappe.get_all(
+            "Sales Invoice",
+            filters={
+                "custom_ury_credit_settlement": ["in", list(credit_settlements)],
+                "docstatus": 1,
+            },
+            fields=[
+                "name",
+                "custom_ury_credit_settlement",
+                "paid_amount",
+                "outstanding_amount",
+                "due_date",
+            ],
+        )
+        if credit_settlements
+        else []
+    )
+    receivable_by_settlement = {
+        row.custom_ury_credit_settlement: row for row in receivables
+    }
+    for invoice in invoices:
+        meta = by_name.get(invoice.get("name"))
+        if meta:
+            for fieldname, value in meta.items():
+                if fieldname not in invoice or invoice.get(fieldname) is None:
+                    invoice[fieldname] = value
+            receivable = receivable_by_settlement.get(
+                meta.get("custom_ury_settlement")
+            )
+            if receivable:
+                invoice["paid_amount"] = receivable.paid_amount
+                invoice["outstanding_amount"] = receivable.outstanding_amount
+                invoice["due_date"] = receivable.due_date
+                invoice["custom_ury_credit_sales_invoice"] = receivable.name
+    return invoices
+
+
+def _get_active_credit_invoices(
+    branch, limit, limit_start=0, *, cashier=None, query=None
+):
+    """Return the live receivable balance, including post-consolidation payments."""
+    conditions = ["pi.branch = %(branch)s", "pi.docstatus = 1"]
+    params = {
+        "branch": branch,
+        "limit": int(limit),
+        "limit_start": int(limit_start),
+    }
+    if cashier:
+        conditions.append("pi.cashier = %(cashier)s")
+        params["cashier"] = cashier
+    if query:
+        conditions.append(
+            "(pi.name LIKE %(query)s OR pi.customer LIKE %(query)s "
+            "OR pi.mobile_number LIKE %(query)s)"
+        )
+        params["query"] = f"%{query}%"
+    conditions.append(
+        "pi.custom_ury_settlement_type IN ('Partial Credit', 'Full Credit')"
+    )
+    conditions.append(
+        "(CASE WHEN COALESCE(pi.consolidated_invoice, '') = '' "
+        "THEN COALESCE(settlement.credit_amount, 0) "
+        "ELSE COALESCE(si.outstanding_amount, 0) END) > 0.005"
+    )
+    where_clause = " AND ".join(conditions)
+    return frappe.db.sql(
+        f"""
+        SELECT
+            pi.name, pi.invoice_printed, pi.grand_total, pi.restaurant_table,
+            pi.custom_merged_tables, pi.cashier, pi.waiter, pi.net_total,
+            pi.posting_time, pi.total_taxes_and_charges, pi.customer,
+            CASE WHEN si.name IS NOT NULL THEN si.status ELSE pi.status END AS status,
+            pi.mobile_number, pi.posting_date, pi.rounded_total, pi.order_type,
+            pi.additional_discount_percentage, pi.discount_amount,
+            pi.custom_split_group, pi.custom_split_from,
+            pi.custom_merged_pos_invoice, pi.custom_merged_total,
+            settlement.paid_now AS paid_amount,
+            CASE WHEN COALESCE(pi.consolidated_invoice, '') = ''
+                THEN settlement.credit_amount ELSE si.outstanding_amount END AS outstanding_amount,
+            COALESCE(si.due_date, pi.custom_ury_credit_due_date, pi.due_date) AS due_date,
+            pi.custom_ury_settlement, pi.custom_ury_settlement_type,
+            settlement.credit_amount AS custom_ury_credit_amount,
+            pi.custom_ury_credit_due_date,
+            settlement.manual_discount_total AS custom_ury_manual_discount_total,
+            si.name AS custom_ury_credit_sales_invoice
+        FROM `tabPOS Invoice` pi
+        INNER JOIN `tabURY POS Settlement Invoice` settlement_invoice
+          ON settlement_invoice.parent = pi.custom_ury_settlement
+         AND settlement_invoice.parenttype = 'URY POS Settlement'
+         AND settlement_invoice.idx = 1
+         AND settlement_invoice.pos_invoice = pi.name
+        INNER JOIN `tabURY POS Settlement` settlement
+          ON settlement.name = pi.custom_ury_settlement
+         AND settlement.docstatus = 1
+        LEFT JOIN `tabSales Invoice` si
+          ON si.custom_ury_credit_settlement = pi.custom_ury_settlement
+         AND si.docstatus = 1
+        WHERE {where_clause}
+        ORDER BY pi.modified DESC
+        LIMIT %(limit)s OFFSET %(limit_start)s
+        """,
+        params,
+        as_dict=True,
+    )
+
+
 @frappe.whitelist()
 def get_split_group(invoice):
     group = frappe.db.get_value("POS Invoice", invoice, "custom_split_group")
@@ -782,6 +923,14 @@ def get_split_group(invoice):
         "creation",
         "additional_discount_percentage",
         "discount_amount",
+        "paid_amount",
+        "outstanding_amount",
+        "due_date",
+        "custom_ury_settlement",
+        "custom_ury_settlement_type",
+        "custom_ury_credit_amount",
+        "custom_ury_credit_due_date",
+        "custom_ury_manual_discount_total",
     ]
 
     invoices = frappe.get_all(
@@ -879,6 +1028,14 @@ def getInvoiceForCashier(status, cashier, limit, limit_start):
             as_dict=True,
         )
         updatedlist.extend(invoices)    
+    elif status == "Credit":
+        invoices = _get_active_credit_invoices(
+            branch,
+            limit,
+            limit_start,
+            cashier=cashier,
+        )
+        updatedlist.extend(invoices)
     else:
         
         invoices = frappe.db.sql(
@@ -903,6 +1060,7 @@ def getInvoiceForCashier(status, cashier, limit, limit_start):
             updatedlist.pop()
     else:
             next = False   
+    updatedlist = _enrich_commercial_meta(updatedlist)
     return  { "data":updatedlist,"next":next}
 
 
@@ -977,6 +1135,9 @@ def getPosInvoice(status, limit, limit_start):
             as_dict=True,
         )
         updatedlist.extend(invoices)    
+    elif status == "Credit":
+        invoices = _get_active_credit_invoices(branch, limit, limit_start)
+        updatedlist.extend(invoices)
     else:
         
         invoices = frappe.db.sql(
@@ -1003,6 +1164,7 @@ def getPosInvoice(status, limit, limit_start):
             updatedlist.pop()
     else:
             next = False
+    updatedlist = _enrich_commercial_meta(updatedlist)
     updatedlist = _enrich_split_group_meta(updatedlist)
     return  { "data":updatedlist,"next":next}
 
@@ -1012,7 +1174,18 @@ def searchPosInvoice(query,status):
     if not query:
         return {"data": [], "next": False}
     query = query.lower()
-    filters = {"status": "Paid" if status == "Recently Paid" else status}
+    branch = getBranch()
+    filters = {
+        "branch": branch,
+        "status": "Paid" if status == "Recently Paid" else status,
+    }
+
+    if status == "Credit":
+        pos_invoices = _get_active_credit_invoices(
+            branch, 10, query=query
+        )
+        pos_invoices = _enrich_split_group_meta(pos_invoices)
+        return {"data": pos_invoices, "next": len(pos_invoices) == 10}
     
     # Add additional conditions for Unbilled status
     if status == "Unbilled":
@@ -1051,10 +1224,19 @@ def searchPosInvoice(query,status):
             "custom_merged_pos_invoice",
             "custom_merged_total",
             "additional_discount_percentage",
-            "discount_amount"
+            "discount_amount",
+            "paid_amount",
+            "outstanding_amount",
+            "due_date",
+            "custom_ury_settlement",
+            "custom_ury_settlement_type",
+            "custom_ury_credit_amount",
+            "custom_ury_credit_due_date",
+            "custom_ury_manual_discount_total"
         ],
         limit_page_length=10 
     )
+    pos_invoices = _enrich_commercial_meta(pos_invoices)
     pos_invoices = _enrich_split_group_meta(pos_invoices)
     
     return {"data": pos_invoices, "next": len(pos_invoices) == 10}
@@ -1137,6 +1319,23 @@ def getPosProfile():
         print_format = pos_profiles.print_format
         paid_limit=pos_profiles.paid_limit
         enable_discount = pos_profiles.custom_enable_discount
+        enable_commercial_checkout = cint(
+            pos_profiles.get("custom_ury_enable_commercial_checkout")
+        )
+        enable_credit_sales = cint(
+            pos_profiles.get("custom_ury_enable_credit_sales")
+        )
+        default_credit_days = cint(
+            pos_profiles.get("custom_ury_default_credit_days") or 30
+        )
+        configured_discount_limit = pos_profiles.get(
+            "custom_ury_max_discount_percentage"
+        )
+        max_discount_percentage = (
+            100
+            if configured_discount_limit in (None, "")
+            else flt(configured_discount_limit)
+        )
         multiple_cashier = pos_profiles.custom_enable_multiple_cashier
         edit_order_type = pos_profiles.custom_edit_order_type
         enable_kot_reprint = pos_profiles.custom_enable_kot_reprint
@@ -1224,6 +1423,11 @@ def getPosProfile():
         "paid_limit":paid_limit,
         "disable_rounded_total":disable_rounded_total,
         "enable_discount":enable_discount,
+        "enable_commercial_checkout": enable_commercial_checkout,
+        "enable_credit_sales": enable_credit_sales,
+        "default_credit_days": default_credit_days,
+        "max_discount_percentage": max_discount_percentage,
+        "allow_partial_payment": cint(pos_profiles.allow_partial_payment),
         "multiple_cashier":multiple_cashier,
         "owner":owner,
         "edit_order_type":edit_order_type,

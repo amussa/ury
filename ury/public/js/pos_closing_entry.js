@@ -27,6 +27,7 @@ frappe.ui.form.on("POS Closing Entry", {
 		}
 		frm.refresh_field("payment_reconciliation");
 		refresh_difference_justification(frm);
+		await refresh_commercial_summary(frm);
 	},
 
 	validate(frm) {
@@ -119,4 +120,37 @@ function has_payment_difference(frm) {
 
 function is_missing_count(value) {
 	return value === null || value === undefined || value === "";
+}
+
+async function refresh_commercial_summary(frm) {
+	// Submitted closings are immutable operational records.  Rebuilding their
+	// child table on refresh marks the form dirty and can bypass the intended
+	// server-controlled post-submit update path.
+	if (frm.doc.docstatus !== 0) return;
+	const invoices = (frm.doc.pos_transactions || [])
+		.map((row) => row.pos_invoice)
+		.filter(Boolean);
+	const response = await frappe.call({
+		method: "ury.ury.hooks.ury_pos_closing_entry.get_commercial_summary",
+		args: {
+			pos_invoices: invoices,
+			pos_opening_entry: frm.doc.pos_opening_entry,
+		},
+	});
+	const summary = response.message || {};
+
+	frm.clear_table("custom_ury_credit_sales");
+	for (const row of summary.credit_sales || []) {
+		frm.add_child("custom_ury_credit_sales", row);
+	}
+	for (const fieldname of [
+		"custom_ury_credit_sales_count",
+		"custom_ury_credit_total",
+		"custom_ury_discount_total",
+		"custom_ury_house_offer_count",
+		"custom_ury_house_offer_value",
+	]) {
+		await frm.set_value(fieldname, summary[fieldname] || 0);
+	}
+	frm.refresh_field("custom_ury_credit_sales");
 }

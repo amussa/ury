@@ -79,6 +79,66 @@ class TestURYPosClosingEntryHooks(TestCase):
 		self.assertEqual(doc.payment_reconciliation[0].closing_amount, 130)
 		self.assertEqual(doc.payment_reconciliation[0].difference, 10)
 
+	def test_commercial_summary_counts_each_settlement_once(self):
+		settlements = [
+			frappe._dict(
+				name="SET-1",
+				customer="Customer A",
+				settlement_type="Partial Credit",
+				total_before_manual_discount=120,
+				manual_discount_total=20,
+				grand_total=100,
+				paid_now=40,
+				credit_amount=60,
+				due_date="2026-09-15",
+			),
+			frappe._dict(
+				name="SET-2",
+				customer="Customer B",
+				settlement_type="House Offer",
+				total_before_manual_discount=50,
+				manual_discount_total=50,
+				grand_total=0,
+				paid_now=0,
+				credit_amount=0,
+			),
+		]
+		allocations = [
+			frappe._dict(parent="SET-1", pos_invoice="PI-1"),
+			frappe._dict(parent="SET-1", pos_invoice="PI-2"),
+			frappe._dict(parent="SET-2", pos_invoice="PI-3"),
+		]
+
+		summary = ury_pos_closing_entry.build_commercial_summary(
+			["PI-1", "PI-2", "PI-3"], settlements, allocations
+		)
+
+		self.assertEqual(summary["custom_ury_credit_sales_count"], 1)
+		self.assertEqual(summary["custom_ury_credit_total"], 60)
+		self.assertEqual(summary["custom_ury_discount_total"], 20)
+		self.assertEqual(summary["custom_ury_house_offer_count"], 1)
+		self.assertEqual(summary["custom_ury_house_offer_value"], 50)
+		self.assertEqual(summary["credit_sales"][0]["pos_invoices"], "PI-1, PI-2")
+
+	@patch("ury.ury.hooks.ury_pos_closing_entry.frappe.db.sql")
+	@patch("ury.ury.hooks.ury_pos_closing_entry.frappe.db.get_value")
+	@patch(
+		"ury.ury.hooks.ury_pos_closing_entry.has_settlement_global_access",
+		return_value=True,
+	)
+	def test_ury_manager_can_preview_commercial_summary_without_branch_row(
+		self, _global_access, get_value, db_sql
+	):
+		get_value.return_value = frappe._dict(
+			branch="Polana",
+			pos_profile="POS Polana",
+			owner="cashier@example.com",
+		)
+
+		ury_pos_closing_entry._validate_summary_access(["PI-1"], None)
+
+		db_sql.assert_not_called()
+
 
 def _closing(payment_reconciliation, justification=""):
 	return frappe._dict(

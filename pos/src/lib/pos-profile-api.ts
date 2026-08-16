@@ -21,6 +21,14 @@ export interface PosProfileLimited {
   multiple_cashier: number;
   owner: string;
   edit_order_type?: number;
+  custom_ury_enable_commercial_checkout?: number;
+  custom_ury_enable_credit_sales?: number;
+  custom_ury_default_credit_days?: number;
+  custom_ury_max_discount_percentage?: number;
+  enable_commercial_checkout?: number;
+  enable_credit_sales?: number;
+  default_credit_days?: number;
+  max_discount_percentage?: number;
 }
 
 export interface PosProfileLimitedResponse {
@@ -65,6 +73,10 @@ export interface PosProfileFull {
   role_restricted_for_table_order?: RolePermission[];
   transfer_role_permissions?: RolePermission[];
   paid_limit?: number;
+  custom_ury_enable_commercial_checkout?: number;
+  custom_ury_enable_credit_sales?: number;
+  custom_ury_default_credit_days?: number;
+  custom_ury_max_discount_percentage?: number;
 }
 
 // Combined POS Profile with both limited and full fields
@@ -85,6 +97,10 @@ export interface PosProfileCombined extends PosProfileFull {
   edit_order_type?: number;
   view_all_status?: number;
   custom_daily_pos_close?: number;
+  custom_ury_enable_commercial_checkout?: number;
+  custom_ury_enable_credit_sales?: number;
+  custom_ury_default_credit_days?: number;
+  custom_ury_max_discount_percentage?: number;
 }
 
 export interface Currency {
@@ -135,6 +151,30 @@ export async function getCombinedPosProfile(): Promise<PosProfileCombined> {
     enable_discount: limitedProfile.enable_discount,
     multiple_cashier: limitedProfile.multiple_cashier,
     edit_order_type: limitedProfile.edit_order_type,
+    custom_ury_enable_commercial_checkout: Number(
+      limitedProfile.custom_ury_enable_commercial_checkout
+        ?? limitedProfile.enable_commercial_checkout
+        ?? fullProfile.custom_ury_enable_commercial_checkout
+        ?? 0
+    ),
+    custom_ury_enable_credit_sales: Number(
+      limitedProfile.custom_ury_enable_credit_sales
+        ?? limitedProfile.enable_credit_sales
+        ?? fullProfile.custom_ury_enable_credit_sales
+        ?? 0
+    ),
+    custom_ury_default_credit_days: Number(
+      limitedProfile.custom_ury_default_credit_days
+        ?? limitedProfile.default_credit_days
+        ?? fullProfile.custom_ury_default_credit_days
+        ?? 30
+    ),
+    custom_ury_max_discount_percentage: Number(
+      limitedProfile.custom_ury_max_discount_percentage
+        ?? limitedProfile.max_discount_percentage
+        ?? fullProfile.custom_ury_max_discount_percentage
+        ?? 100
+    ),
   };
 
   return combinedProfile;

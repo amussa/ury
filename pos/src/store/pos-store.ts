@@ -430,27 +430,10 @@ export const usePOSStore = create<POSStore>((set, get) => ({
 
   fetchPosProfile: async () => {
     try {
-      const cached = sessionStorage.getItem('posProfile');
-      if (cached) {
-        const profile = JSON.parse(cached);
-        // Profiles cached before a default customer was configured must be
-        // refreshed, otherwise the POS keeps asking for a customer forever.
-        if (profile.customer) {
-          set({
-            posProfile: profile,
-            selectedCustomer: get().selectedCustomer ?? getDefaultCustomer(profile),
-            profileLoading: false,
-            currency: profile.currency || 'INR'
-          });
-          if (!storage.getItem('currencySymbol')) {
-            await get().fetchCurrencySymbol();
-          }
-          return;
-        }
-        sessionStorage.removeItem('posProfile');
-      }
-
       set({ profileLoading: true, error: null });
+      // POS Profile flags are operational controls.  Always refresh them from
+      // the server so enabling/disabling commercial checkout takes effect on
+      // the next page refresh instead of remaining stale in sessionStorage.
       const combinedProfile = await getCombinedPosProfile();
       
       sessionStorage.setItem('posProfile', JSON.stringify(combinedProfile));

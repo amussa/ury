@@ -7,3 +7,4 @@ ury.patches.v2_0.default_permissions
 ury.patches.v2_0.install_kot_escpos
 ury.patches.v2_0.install_price_options
 ury.patches.v2_0.install_pos_closing_reconciliation
+ury.patches.v2_0.install_commercial_checkout

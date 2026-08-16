@@ -6,7 +6,49 @@ from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 def after_install():
-    create_custom_fields(get_custom_fields())
+	add_custom_fields()
+	# Patches are marked as executed before ``after_install`` on a fresh site,
+	# so programmatic print formats must also be installed here.
+	install_commercial_checkout_runtime_artifacts()
+
+
+def after_migrate():
+	"""Reapply runtime settings after fixtures have been synchronised."""
+	install_commercial_checkout_runtime_artifacts()
+
+
+def install_commercial_checkout_runtime_artifacts():
+	"""Install canonical print formats and settings that fixtures may overwrite."""
+	from ury.ury.printing.pos_closing_format import install_pos_closing_print_format
+	from ury.ury.printing.pos_receipt_format import install_pos_receipt_formats
+
+	# The historical fixture still contains ``no_copy = 0``.  Migrations import
+	# fixtures after patches, so enforce the safe mapper setting in after_migrate
+	# rather than modifying generated fixture JSON by hand.
+	if frappe.db.exists("Custom Field", "POS Invoice-custom_split_from"):
+		frappe.db.set_value(
+			"Custom Field",
+			"POS Invoice-custom_split_from",
+			"no_copy",
+			1,
+			update_modified=False,
+		)
+
+	install_pos_closing_print_format()
+	install_pos_receipt_formats()
+	for doctype in (
+		"POS Profile",
+		"POS Invoice",
+		"POS Invoice Item",
+		"Sales Invoice",
+		"POS Closing Entry",
+	):
+		frappe.clear_cache(doctype=doctype)
+
+
+def add_custom_fields():
+	"""Create or update all URY-owned custom fields idempotently."""
+	create_custom_fields(get_custom_fields(), update=True)
     
 def before_uninstall():
 	delete_custom_fields(get_custom_fields())
@@ -126,6 +168,7 @@ def get_custom_fields():
 					"label": "Split From",
 					"options": "POS Invoice",
 					"read_only": 1,
+					"no_copy": 1,
 				},
 				{
 					"fieldname": "custom_split_group",
@@ -141,15 +184,71 @@ def get_custom_fields():
 				},
 				{
 					"fieldname": "arrived_time",
-					"fieldtype": "Time",
+					"fieldtype": "Data",
 					"insert_after": "column_break_gd1mq",
 					"label": "Arrived Time"
 				},
 				{
 					"fieldname": "total_spend_time",
-					"fieldtype": "Time",
+					"fieldtype": "Data",
 					"insert_after": "arrived_time",
 					"label": "Total Spend Time"
+				},
+				{
+					"fieldname": "custom_ury_settlement_section",
+					"fieldtype": "Section Break",
+					"label": "URY Settlement",
+					"insert_after": "total_spend_time",
+					"collapsible": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_settlement",
+					"fieldtype": "Link",
+					"label": "URY POS Settlement",
+					"options": "URY POS Settlement",
+					"insert_after": "custom_ury_settlement_section",
+					"read_only": 1,
+					"no_copy": 1,
+					"search_index": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_settlement_type",
+					"fieldtype": "Select",
+					"label": "Settlement Type",
+					"options": "\nPaid\nPartial Credit\nFull Credit\nHouse Offer",
+					"insert_after": "custom_ury_settlement",
+					"read_only": 1,
+					"no_copy": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_credit_amount",
+					"fieldtype": "Currency",
+					"label": "Credit Amount",
+					"insert_after": "custom_ury_settlement_type",
+					"read_only": 1,
+					"no_copy": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_credit_due_date",
+					"fieldtype": "Date",
+					"label": "Credit Due Date",
+					"insert_after": "custom_ury_credit_amount",
+					"read_only": 1,
+					"no_copy": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_manual_discount_total",
+					"fieldtype": "Currency",
+					"label": "Manual Discount Total",
+					"insert_after": "custom_ury_credit_due_date",
+					"read_only": 1,
+					"no_copy": 1,
+					"module": "URY",
 				}
 				],
       
@@ -194,7 +293,7 @@ def get_custom_fields():
 				},
 				{
 					"fieldname": "no_of_pax",
-					"fieldtype": "Data",
+					"fieldtype": "Int",
 					"label": "Pax",
 					"insert_after": "column_break_rwbwf",
 					"read_only": 0,
@@ -245,15 +344,53 @@ def get_custom_fields():
 				},
 				{
 					"fieldname": "arrived_time",
-					"fieldtype": "Time",
+					"fieldtype": "Data",
 					"insert_after": "column_break_gd1mq",
 					"label": "Arrived Time"
 				},
 				{
 					"fieldname": "total_spend_time",
-					"fieldtype": "Time",
+					"fieldtype": "Data",
 					"insert_after": "arrived_time",
 					"label": "Total Spend Time"
+				},
+				{
+					"fieldname": "custom_ury_credit_section",
+					"fieldtype": "Section Break",
+					"label": "URY Credit",
+					"insert_after": "total_spend_time",
+					"collapsible": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_credit_settlement",
+					"fieldtype": "Link",
+					"label": "URY POS Settlement",
+					"options": "URY POS Settlement",
+					"insert_after": "custom_ury_credit_section",
+					"read_only": 1,
+					"no_copy": 1,
+					"search_index": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_credit_due_date",
+					"fieldtype": "Date",
+					"label": "Agreed Credit Due Date",
+					"insert_after": "custom_ury_credit_settlement",
+					"read_only": 1,
+					"no_copy": 1,
+					"module": "URY",
+				},
+				{
+					"fieldname": "custom_ury_settlement_type",
+					"fieldtype": "Select",
+					"label": "Settlement Type",
+					"options": "\nPartial Credit\nFull Credit\nHouse Offer\nMixed",
+					"insert_after": "custom_ury_credit_due_date",
+					"read_only": 1,
+					"no_copy": 1,
+					"module": "URY",
 				}
 				],
 
@@ -311,6 +448,50 @@ def get_custom_fields():
 				"insert_after": "qz_print",
 				"label": "QZ Host",
 				"translatable": 0,
+			},
+			{
+				"fieldname": "custom_ury_commercial_checkout_section",
+				"fieldtype": "Section Break",
+				"label": "Commercial Checkout",
+				"insert_after": "qz_host",
+				"collapsible": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_enable_commercial_checkout",
+				"fieldtype": "Check",
+				"label": "Enable URY Commercial Checkout",
+				"insert_after": "custom_ury_commercial_checkout_section",
+				"default": "0",
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_enable_credit_sales",
+				"fieldtype": "Check",
+				"label": "Enable Credit Sales",
+				"insert_after": "custom_ury_enable_commercial_checkout",
+				"default": "0",
+				"depends_on": "custom_ury_enable_commercial_checkout",
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_default_credit_days",
+				"fieldtype": "Int",
+				"label": "Default Credit Days",
+				"insert_after": "custom_ury_enable_credit_sales",
+				"default": "30",
+				"depends_on": "custom_ury_enable_credit_sales",
+				"non_negative": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_max_discount_percentage",
+				"fieldtype": "Percent",
+				"label": "Maximum Manual Discount",
+				"insert_after": "custom_ury_default_credit_days",
+				"default": "100",
+				"non_negative": 1,
+				"module": "URY",
 			}
 		],
   
@@ -403,6 +584,57 @@ def get_custom_fields():
 				"print_hide_if_no_value": 1,
 				"module": "URY",
 			},
+			{
+				"fieldname": "custom_ury_rate_before_manual_discount",
+				"fieldtype": "Currency",
+				"label": "Rate Before Manual Discount",
+				"insert_after": "custom_ury_price_option_label",
+				"hidden": 1,
+				"read_only": 1,
+				"no_copy": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_price_option_reduction",
+				"fieldtype": "Currency",
+				"label": "Price Option Reduction",
+				"insert_after": "custom_ury_rate_before_manual_discount",
+				"hidden": 1,
+				"read_only": 1,
+				"no_copy": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_manual_discount_type",
+				"fieldtype": "Select",
+				"label": "Manual Discount Type",
+				"options": "\nPercent\nAmount",
+				"insert_after": "custom_ury_price_option_reduction",
+				"hidden": 1,
+				"read_only": 1,
+				"no_copy": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_manual_discount_input",
+				"fieldtype": "Float",
+				"label": "Manual Discount Input",
+				"insert_after": "custom_ury_manual_discount_type",
+				"hidden": 1,
+				"read_only": 1,
+				"no_copy": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_manual_discount_amount",
+				"fieldtype": "Currency",
+				"label": "Manual Discount Amount",
+				"insert_after": "custom_ury_manual_discount_input",
+				"hidden": 1,
+				"read_only": 1,
+				"no_copy": 1,
+				"module": "URY",
+			},
 		],
 
 		"Sales Invoice Item": [
@@ -433,6 +665,78 @@ def get_custom_fields():
 				"insert_after": "restaurant_table",
 				"label": "Merged Tables",
 				"read_only": 1,
+			},
+		],
+
+		"POS Closing Entry": [
+			{
+				"fieldname": "custom_ury_commercial_summary_section",
+				"fieldtype": "Section Break",
+				"label": "Resumo comercial URY",
+				"insert_after": "pos_transactions",
+				"collapsible": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_credit_sales",
+				"fieldtype": "Table",
+				"label": "Vendas a crédito",
+				"options": "URY POS Closing Credit",
+				"insert_after": "custom_ury_commercial_summary_section",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_credit_sales_count",
+				"fieldtype": "Int",
+				"label": "Número de vendas a crédito",
+				"insert_after": "custom_ury_credit_sales",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_credit_total",
+				"fieldtype": "Currency",
+				"label": "Total concedido a crédito",
+				"insert_after": "custom_ury_credit_sales_count",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_commercial_summary_column",
+				"fieldtype": "Column Break",
+				"insert_after": "custom_ury_credit_total",
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_discount_total",
+				"fieldtype": "Currency",
+				"label": "Total de descontos manuais",
+				"insert_after": "custom_ury_commercial_summary_column",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_house_offer_count",
+				"fieldtype": "Int",
+				"label": "Número de ofertas da casa",
+				"insert_after": "custom_ury_discount_total",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
+			},
+			{
+				"fieldname": "custom_ury_house_offer_value",
+				"fieldtype": "Currency",
+				"label": "Valor das ofertas da casa",
+				"insert_after": "custom_ury_house_offer_count",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
 			},
 		],
      

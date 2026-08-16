@@ -5,11 +5,16 @@ from unittest.mock import patch
 import frappe
 
 from ury.ury_pos.price_options import (
+    MANUAL_DISCOUNT_AMOUNT_FIELD,
+    MANUAL_DISCOUNT_INPUT_FIELD,
+    MANUAL_DISCOUNT_TYPE_FIELD,
     OPTION_FIELD,
     OPTION_LABEL_FIELD,
+    RATE_BEFORE_MANUAL_DISCOUNT_FIELD,
     STANDARD_OPTION_ID,
     _get_used_promotion_qty,
     apply_price_option_to_row,
+    get_expected_rate_after_manual_discount,
     get_item_price_options,
     resolve_price_option,
     validate_pos_invoice_price_options,
@@ -368,6 +373,47 @@ class TestPriceOptions(TestCase):
         self.assertEqual(row[OPTION_FIELD], "PROMO-1")
         self.assertEqual(row[OPTION_LABEL_FIELD], "Promotion")
 
+    def test_rebuilds_percent_manual_discount_from_audited_promotion_rate(self):
+        item = frappe._dict(
+            qty=2,
+            rate=60,
+            **{
+                RATE_BEFORE_MANUAL_DISCOUNT_FIELD: 75,
+                MANUAL_DISCOUNT_TYPE_FIELD: "Percent",
+                MANUAL_DISCOUNT_INPUT_FIELD: 20,
+                MANUAL_DISCOUNT_AMOUNT_FIELD: 30,
+            },
+        )
+
+        self.assertEqual(get_expected_rate_after_manual_discount(item, 75), 60)
+
+    def test_rebuilds_fixed_manual_discount_as_total_for_the_line(self):
+        item = frappe._dict(
+            qty=2,
+            rate=62.5,
+            **{
+                RATE_BEFORE_MANUAL_DISCOUNT_FIELD: 75,
+                MANUAL_DISCOUNT_TYPE_FIELD: "Amount",
+                MANUAL_DISCOUNT_INPUT_FIELD: 25,
+                MANUAL_DISCOUNT_AMOUNT_FIELD: 25,
+            },
+        )
+
+        self.assertEqual(get_expected_rate_after_manual_discount(item, 75), 62.5)
+
+    def test_rejects_inconsistent_manual_discount_snapshot(self):
+        item = frappe._dict(
+            qty=1,
+            **{
+                RATE_BEFORE_MANUAL_DISCOUNT_FIELD: 75,
+                MANUAL_DISCOUNT_TYPE_FIELD: "Percent",
+                MANUAL_DISCOUNT_INPUT_FIELD: 20,
+                MANUAL_DISCOUNT_AMOUNT_FIELD: 10,
+            },
+        )
+
+        self.assertIsNone(get_expected_rate_after_manual_discount(item, 75))
+
     @patch("ury.ury_pos.price_options.get_item_price_options")
     def test_rejects_quantity_beyond_selected_option(self, get_options):
         get_options.return_value = {
@@ -450,6 +496,42 @@ class TestPriceOptions(TestCase):
         group_promotions.assert_called_once_with(
             "Menu A", ["CAKE-SLICE"], for_update=True
         )
+
+    @patch("ury.ury_pos.price_options.group_menu_promotions")
+    def test_price_validation_accepts_only_authorised_audited_manual_discount(
+        self, group_promotions
+    ):
+        group_promotions.return_value = {"CAKE-SLICE": [_promotion()]}
+        item = frappe._dict(
+            item_code="CAKE-SLICE",
+            qty=1,
+            rate=60,
+            price_list_rate=100,
+            custom_ury_price_option="PROMO-1",
+            custom_ury_price_option_label="Promotion",
+            custom_ury_rate_before_manual_discount=75,
+            custom_ury_manual_discount_type="Percent",
+            custom_ury_manual_discount_input=20,
+            custom_ury_manual_discount_amount=15,
+        )
+
+        validate_price_option_row_prices(
+            [item],
+            "Menu A",
+            {"CAKE-SLICE": 100},
+            manual_discounts_authorized=True,
+        )
+
+        with patch(
+            "ury.ury_pos.price_options.frappe.throw", side_effect=_raise_frappe
+        ):
+            with self.assertRaises(frappe.ValidationError):
+                validate_price_option_row_prices(
+                    [item],
+                    "Menu A",
+                    {"CAKE-SLICE": 100},
+                    manual_discounts_authorized=False,
+                )
 
     @patch("ury.ury_pos.price_options.group_menu_promotions")
     def test_price_validation_rejects_forged_promotion_label(
@@ -628,7 +710,62 @@ class TestPOSInvoicePriceOptionGuard(TestCase):
             exclude_invoice="POS-INV-1",
         )
         validate_prices.assert_called_once_with(
-            invoice.get("items"), "Menu A", {"CAKE-SLICE": 100}
+            invoice.get("items"),
+            "Menu A",
+            {"CAKE-SLICE": 100},
+            manual_discounts_authorized=False,
+        )
+
+    @patch("ury.ury_pos.price_options.validate_price_option_row_prices")
+    @patch("ury.ury_pos.price_options.validate_price_option_quantities")
+    @patch("ury.ury_pos.api._get_stock_details")
+    @patch("ury.ury.doctype.ury_order.ury_order.get_authoritative_item_prices")
+    @patch("ury.ury_pos.price_options.get_menu_promotions")
+    @patch("ury.ury_pos.price_options.frappe.db.get_value", return_value="Menu A")
+    def test_manual_discount_on_one_row_fetches_all_sibling_base_rates(
+        self,
+        _get_value,
+        get_promotions,
+        get_prices,
+        get_stock,
+        _validate_quantities,
+        _validate_prices,
+    ):
+        invoice = self._invoice()
+        invoice["items"][0].custom_ury_rate_before_manual_discount = 75
+        invoice["items"][0].custom_ury_manual_discount_type = "Percent"
+        invoice["items"][0].custom_ury_manual_discount_input = 100
+        invoice["items"][0].custom_ury_manual_discount_amount = 75
+        invoice["items"].append(
+            frappe._dict(
+                name="ROW-2",
+                item_code="NORMAL-ITEM",
+                qty=1,
+                stock_qty=1,
+                conversion_factor=1,
+                rate=50,
+                price_list_rate=50,
+            )
+        )
+        get_promotions.return_value = []
+        get_prices.return_value = {"CAKE-SLICE": 100, "NORMAL-ITEM": 50}
+        get_stock.return_value = {
+            "CAKE-SLICE": {"available_qty": 4},
+            "NORMAL-ITEM": {"available_qty": 4},
+        }
+
+        validate_pos_invoice_price_options(invoice)
+
+        get_prices.assert_called_once_with(
+            ["CAKE-SLICE", "NORMAL-ITEM"],
+            "Menu A Price List",
+            for_update=True,
+        )
+        get_stock.assert_called_once_with(
+            ["CAKE-SLICE", "NORMAL-ITEM"],
+            "Stores - A",
+            exclude_invoice="POS-INV-1",
+            for_update=True,
         )
 
     @patch("ury.ury_pos.price_options.get_menu_promotions")
@@ -825,6 +962,57 @@ class TestPOSInvoicePriceOptionGuard(TestCase):
         ):
             with self.assertRaises(frappe.ValidationError):
                 validate_pos_invoice_price_options(returned)
+
+    @patch("ury.ury_pos.price_options.lock_invoice_price_options")
+    @patch("ury.ury_pos.price_options.frappe.get_doc")
+    def test_return_rehydrates_missing_manual_discount_snapshot(
+        self, get_doc, _lock_options
+    ):
+        original = self._invoice(
+            name="POS-ORIGINAL",
+            docstatus=1,
+            items=[
+                frappe._dict(
+                    name="ORIGINAL-ROW",
+                    item_code="CAKE-SLICE",
+                    qty=2,
+                    stock_qty=2,
+                    conversion_factor=1,
+                    rate=60,
+                    price_list_rate=100,
+                    custom_ury_price_option="PROMO-1",
+                    custom_ury_price_option_label="Promotion",
+                    custom_ury_rate_before_manual_discount=75,
+                    custom_ury_price_option_reduction=25,
+                    custom_ury_manual_discount_type="Percent",
+                    custom_ury_manual_discount_input=20,
+                    custom_ury_manual_discount_amount=30,
+                )
+            ],
+        )
+        get_doc.return_value = original
+        returned_item = frappe._dict(
+            item_code="CAKE-SLICE",
+            sales_invoice_item="ORIGINAL-ROW",
+            qty=-1,
+            stock_qty=-1,
+            conversion_factor=1,
+            rate=60,
+            price_list_rate=100,
+            custom_ury_price_option="PROMO-1",
+            custom_ury_price_option_label="Promotion",
+        )
+        returned = self._invoice(
+            name=None,
+            is_return=1,
+            return_against="POS-ORIGINAL",
+            items=[returned_item],
+        )
+
+        validate_pos_invoice_price_options(returned)
+
+        self.assertEqual(returned_item.custom_ury_manual_discount_type, "Percent")
+        self.assertEqual(returned_item.custom_ury_manual_discount_amount, 30)
 
 
 def run_unit_tests():

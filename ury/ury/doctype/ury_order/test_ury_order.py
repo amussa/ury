@@ -1,7 +1,7 @@
 # Copyright (c) 2023, Tridz Technologies Pvt. Ltd. and contributors
 # See license.txt
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -14,6 +14,7 @@ from ury.ury.doctype.ury_order.ury_order import (
     _validate_order_stock,
     cancel_order,
     get_authoritative_item_prices,
+    make_invoice,
     merge_tables_batch,
     release_merge_cluster_tables,
     split_bill,
@@ -22,6 +23,39 @@ from ury.ury.doctype.ury_order.ury_order import (
 
 
 class TestURYOrder(FrappeTestCase):
+    @patch("ury.ury.doctype.ury_order.ury_order.frappe.db.get_value", return_value=1)
+    @patch("ury.ury.doctype.ury_order.ury_order.get_order_invoice")
+    @patch("ury.ury.doctype.ury_order.ury_order.frappe.get_value", return_value="Dine In")
+    def test_legacy_payment_is_blocked_before_mutation_for_commercial_profile(
+        self, _get_value, get_order_invoice, get_profile_flag
+    ):
+        invoice = frappe._dict(
+            name="POS-INV-1",
+            pos_profile="POS Polana",
+            customer="Cliente Balc\u00e3o",
+            payments=[],
+        )
+        get_order_invoice.return_value = invoice
+
+        with self.assertRaises(frappe.ValidationError):
+            make_invoice(
+                customer="OTHER-CUSTOMER",
+                payments=[{"mode_of_payment": "Numer\u00e1rio", "amount": 10}],
+                cashier="cashier@example.com",
+                pos_profile="OTHER-PROFILE",
+                owner="cashier@example.com",
+                additionalDiscount=100,
+                invoice="POS-INV-1",
+            )
+
+        self.assertEqual(invoice.customer, "Cliente Balc\u00e3o")
+        self.assertEqual(invoice.payments, [])
+        get_profile_flag.assert_called_once_with(
+            "POS Profile",
+            "POS Polana",
+            "custom_ury_enable_commercial_checkout",
+        )
+
     def test_merge_requires_at_least_one_target_table(self):
         with self.assertRaises(frappe.ValidationError):
             merge_tables_batch("Table 1", [])
@@ -277,7 +311,12 @@ class TestURYOrder(FrappeTestCase):
         _set_value,
     ):
         events = []
-        invoice = frappe._dict(restaurant_table="Table 1")
+        invoice = frappe._dict(
+            restaurant_table="Table 1",
+            docstatus=0,
+            custom_ury_settlement=None,
+        )
+        invoice.check_permission = MagicMock()
         get_doc.return_value = invoice
         lock_price_options.side_effect = lambda _invoice: events.append("lock")
         release_tables.side_effect = (

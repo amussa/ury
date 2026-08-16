@@ -90,6 +90,7 @@ website_route_rules = [
 
 # before_install = "ury.install.before_install"
 after_install = "ury.install.after_install"
+after_migrate = "ury.install.after_migrate"
 
 # Uninstallation
 # ------------
@@ -107,13 +108,13 @@ before_uninstall = "ury.uninstall.uninstall"
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+permission_query_conditions = {
+    "URY POS Settlement": "ury.ury.permissions.ury_pos_settlement.get_permission_query_conditions",
+}
+
+has_permission = {
+    "URY POS Settlement": "ury.ury.permissions.ury_pos_settlement.has_permission",
+}
 
 # DocType Class
 # ---------------
@@ -141,8 +142,15 @@ doc_events = {
     },
     "POS Profile": {"validate": "ury.ury.hooks.ury_pos_profile.validate"},
     "Sales Invoice": {
+        "before_validate": "ury.ury.hooks.ury_sales_invoice_credit.before_validate",
         "before_insert": "ury.ury.hooks.ury_sales_invoice.before_insert",
+        "before_submit": "ury.ury.hooks.ury_sales_invoice_credit.before_submit",
+        "on_submit": "ury.ury.hooks.ury_sales_invoice_credit.on_submit",
         "on_update":"ury.ury.hooks.ury_sales_invoice.on_update",
+        "on_cancel": "ury.ury.hooks.ury_sales_invoice_credit.on_cancel",
+        },
+    "POS Invoice Merge Log": {
+        "before_submit": "ury.ury_pos.credit_consolidation.before_submit",
         },
     "Item": {"validate": "ury.ury.hooks.ury_item.validate"},
     "POS Opening Entry": {
@@ -153,7 +161,8 @@ doc_events = {
         },
     "POS Closing Entry": {
         "before_save": "ury.ury.hooks.ury_pos_closing_entry.before_save",
-        "validate":"ury.ury.hooks.ury_pos_closing_entry.validate"
+        "validate":"ury.ury.hooks.ury_pos_closing_entry.validate",
+        "before_update_after_submit": "ury.ury.hooks.ury_pos_closing_entry.refresh_commercial_summary_after_submit",
         },
     "URY Menu Course": {
 		"validate": "ury.ury.api.ury_menu_course_validation.validate_priority",
@@ -284,12 +293,23 @@ fixtures = [
                     "POS Invoice-column_break_gd1mq",
                     "POS Invoice-arrived_time",
                     "POS Invoice-total_spend_time",
+                    "POS Invoice-custom_ury_settlement_section",
+                    "POS Invoice-custom_ury_settlement",
+                    "POS Invoice-custom_ury_settlement_type",
+                    "POS Invoice-custom_ury_credit_amount",
+                    "POS Invoice-custom_ury_credit_due_date",
+                    "POS Invoice-custom_ury_manual_discount_total",
                     "POS Invoice-section_break_hllcp",
                     "POS Invoice-cancel_reason",
                     "POS Invoice Item-comment",
                     "POS Invoice Item-custom_course",
                     "POS Invoice Item-custom_ury_price_option",
                     "POS Invoice Item-custom_ury_price_option_label",
+                    "POS Invoice Item-custom_ury_rate_before_manual_discount",
+                    "POS Invoice Item-custom_ury_price_option_reduction",
+                    "POS Invoice Item-custom_ury_manual_discount_type",
+                    "POS Invoice Item-custom_ury_manual_discount_input",
+                    "POS Invoice Item-custom_ury_manual_discount_amount",
                     "POS Invoice-custom_merged_total",
                     "POS Invoice-custom_merged_pos_invoice_details",
                     "POS Invoice-custom_merged_pos_invoice",
@@ -309,6 +329,10 @@ fixtures = [
                     "Sales Invoice-column_break_hnrk9",
                     "Sales Invoice-arrived_time",
                     "Sales Invoice-total_spend_time",
+                    "Sales Invoice-custom_ury_credit_section",
+                    "Sales Invoice-custom_ury_credit_settlement",
+                    "Sales Invoice-custom_ury_credit_due_date",
+                    "Sales Invoice-custom_ury_settlement_type",
                     "Sales Invoice-custom_aggregator_id",
                     "Sales Invoice Item-custom_course",
                     "Sales Invoice Item-custom_ury_price_option",
@@ -321,6 +345,11 @@ fixtures = [
                     "POS Profile-printer_settings",
                     "POS Profile-qz_print",
                     "POS Profile-qz_host",
+                    "POS Profile-custom_ury_commercial_checkout_section",
+                    "POS Profile-custom_ury_enable_commercial_checkout",
+                    "POS Profile-custom_ury_enable_credit_sales",
+                    "POS Profile-custom_ury_default_credit_days",
+                    "POS Profile-custom_ury_max_discount_percentage",
                     "POS Profile-section_break_tjhrm",
                     "POS Profile-transfer_role_permissions",
                     "POS Profile-role_allowed_for_billing",
@@ -352,6 +381,14 @@ fixtures = [
                     "POS Opening Entry-custom_rooms",
                     "POS Opening Entry-custom_sub_pos_close_entry",
                     "POS Closing Entry-custom_difference_justification",
+                    "POS Closing Entry-custom_ury_commercial_summary_section",
+                    "POS Closing Entry-custom_ury_credit_sales",
+                    "POS Closing Entry-custom_ury_credit_sales_count",
+                    "POS Closing Entry-custom_ury_credit_total",
+                    "POS Closing Entry-custom_ury_commercial_summary_column",
+                    "POS Closing Entry-custom_ury_discount_total",
+                    "POS Closing Entry-custom_ury_house_offer_count",
+                    "POS Closing Entry-custom_ury_house_offer_value",
                     "POS Closing Entry Detail-custom_closing_amount",
                     "POS Profile-custom_edit_order_type",
                     "Printer Settings-kot_print_format_",

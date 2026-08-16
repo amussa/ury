@@ -2,13 +2,237 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 
+from ury.ury.permissions.ury_pos_settlement import (
+	has_global_access as has_settlement_global_access,
+)
+
+
+TOLERANCE = 0.005
+
 def before_save(doc, method):
     sub_pos_close_check(doc, method)
 
 def validate(doc, method):
-    calculate_closing_amount(doc, method)
-    validate_difference_justification(doc)
-    validate_cashier(doc, method)
+	populate_commercial_summary(doc)
+	calculate_closing_amount(doc, method)
+	validate_difference_justification(doc)
+	validate_cashier(doc, method)
+
+
+def refresh_commercial_summary_after_submit(doc, method=None):
+	"""Overwrite any client-supplied post-submit summary with authoritative data."""
+	populate_commercial_summary(doc)
+
+
+def populate_commercial_summary(doc):
+	invoice_names = [row.pos_invoice for row in (doc.get("pos_transactions") or []) if row.pos_invoice]
+	summary = get_commercial_summary_data(
+		invoice_names,
+		pos_opening_entry=doc.get("pos_opening_entry"),
+	)
+	doc.set("custom_ury_credit_sales", summary["credit_sales"])
+	for fieldname in (
+		"custom_ury_credit_sales_count",
+		"custom_ury_credit_total",
+		"custom_ury_discount_total",
+		"custom_ury_house_offer_count",
+		"custom_ury_house_offer_value",
+	):
+		doc.set(fieldname, summary[fieldname])
+
+
+@frappe.whitelist()
+def get_commercial_summary(pos_invoices, pos_opening_entry=None):
+	"""Preview the read-only summary; the validate hook recalculates it again."""
+	if isinstance(pos_invoices, str):
+		pos_invoices = frappe.parse_json(pos_invoices)
+	invoice_names = [
+		row.get("pos_invoice") if isinstance(row, dict) else row
+		for row in (pos_invoices or [])
+	]
+	invoice_names = list(dict.fromkeys(name for name in invoice_names if name))
+	_validate_summary_access(invoice_names, pos_opening_entry)
+	return get_commercial_summary_data(invoice_names, pos_opening_entry=pos_opening_entry)
+
+
+def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
+	invoice_names = list(dict.fromkeys(invoice_names or []))
+	empty = {
+		"credit_sales": [],
+		"custom_ury_credit_sales_count": 0,
+		"custom_ury_credit_total": 0,
+		"custom_ury_discount_total": 0,
+		"custom_ury_house_offer_count": 0,
+		"custom_ury_house_offer_value": 0,
+	}
+	if not invoice_names:
+		return empty
+
+	invoices = frappe.get_all(
+		"POS Invoice",
+		filters={"name": ["in", invoice_names]},
+		fields=["name", "custom_ury_settlement"],
+	)
+	if len(invoices) != len(invoice_names):
+		frappe.throw(_("Unable to load every POS Invoice in the closing summary."))
+	settlement_names = list(
+		dict.fromkeys(row.custom_ury_settlement for row in invoices if row.custom_ury_settlement)
+	)
+	if not settlement_names:
+		return empty
+
+	settlements = frappe.get_all(
+		"URY POS Settlement",
+		filters={"name": ["in", settlement_names], "docstatus": 1},
+		fields=[
+			"name",
+			"pos_opening_entry",
+			"customer",
+			"settlement_type",
+			"total_before_manual_discount",
+			"manual_discount_total",
+			"grand_total",
+			"paid_now",
+			"credit_amount",
+			"due_date",
+		],
+	)
+	if len(settlements) != len(settlement_names):
+		frappe.throw(_("A POS Invoice references a missing or unsubmitted URY settlement."))
+
+	if pos_opening_entry:
+		wrong_opening = [
+			settlement.name
+			for settlement in settlements
+			if settlement.pos_opening_entry != pos_opening_entry
+		]
+		if wrong_opening:
+			frappe.throw(_("A URY settlement belongs to a different POS Opening Entry."))
+
+	allocations = frappe.get_all(
+		"URY POS Settlement Invoice",
+		filters={"parent": ["in", settlement_names], "parenttype": "URY POS Settlement"},
+		fields=["parent", "pos_invoice", "idx"],
+		order_by="parent, idx",
+	)
+	sales_invoices = frappe.get_all(
+		"Sales Invoice",
+		filters={
+			"custom_ury_credit_settlement": ["in", settlement_names],
+			"docstatus": ["<", 2],
+		},
+		fields=["name", "custom_ury_credit_settlement"],
+	)
+	return build_commercial_summary(
+		invoice_names,
+		settlements,
+		allocations,
+		sales_invoices,
+	)
+
+
+def build_commercial_summary(invoice_names, settlements, allocations, sales_invoices=None):
+	"""Build totals once per settlement, never once per POS Invoice."""
+	invoice_names = set(invoice_names)
+	allocation_map = {}
+	for row in allocations:
+		allocation_map.setdefault(row.parent, []).append(row.pos_invoice)
+
+	sales_map = {}
+	for row in sales_invoices or []:
+		settlement = row.custom_ury_credit_settlement
+		if settlement in sales_map and sales_map[settlement] != row.name:
+			frappe.throw(_("A credit agreement is linked to more than one active Sales Invoice."))
+		sales_map[settlement] = row.name
+
+	credit_sales = []
+	credit_total = 0.0
+	discount_total = 0.0
+	house_offer_count = 0
+	house_offer_value = 0.0
+
+	for settlement in settlements:
+		allocated_invoices = allocation_map.get(settlement.name, [])
+		if not allocated_invoices or any(name not in invoice_names for name in allocated_invoices):
+			frappe.throw(
+				_("All POS Invoices from a URY settlement must be included in the same closing.")
+			)
+
+		if settlement.settlement_type == "House Offer":
+			house_offer_count += 1
+			house_offer_value += flt(settlement.total_before_manual_discount)
+		else:
+			discount_total += flt(settlement.manual_discount_total)
+
+		if flt(settlement.credit_amount) < TOLERANCE:
+			continue
+		credit_total += flt(settlement.credit_amount)
+		credit_sales.append(
+			{
+				"settlement": settlement.name,
+				"pos_invoices": ", ".join(allocated_invoices),
+				"customer": settlement.customer,
+				"total_final": settlement.grand_total,
+				"paid_now": settlement.paid_now,
+				"credit_amount": settlement.credit_amount,
+				"due_date": settlement.due_date,
+				"sales_invoice": sales_map.get(settlement.name),
+			}
+		)
+
+	return {
+		"credit_sales": credit_sales,
+		"custom_ury_credit_sales_count": len(credit_sales),
+		"custom_ury_credit_total": flt(credit_total, 2),
+		"custom_ury_discount_total": flt(discount_total, 2),
+		"custom_ury_house_offer_count": house_offer_count,
+		"custom_ury_house_offer_value": flt(house_offer_value, 2),
+	}
+
+
+def _validate_summary_access(invoice_names, pos_opening_entry):
+	if frappe.session.user == "Guest":
+		raise frappe.AuthenticationError
+
+	global_access = has_settlement_global_access(frappe.session.user)
+	assigned_branches = set()
+	if not global_access:
+		assigned_branches = set(
+			frappe.db.sql(
+				"""
+				select ury_user.parent
+				from `tabURY User` ury_user
+				where ury_user.parenttype = 'Branch' and ury_user.user = %s
+				""",
+				frappe.session.user,
+				pluck=True,
+			)
+		)
+
+	opening = None
+	if pos_opening_entry:
+		opening = frappe.db.get_value(
+			"POS Opening Entry",
+			pos_opening_entry,
+			["pos_profile", "user", "status"],
+			as_dict=True,
+		)
+		if not opening:
+			frappe.throw(_("POS Opening Entry does not exist."), frappe.PermissionError)
+
+	for name in invoice_names:
+		invoice = frappe.db.get_value(
+			"POS Invoice",
+			name,
+			["branch", "pos_profile", "owner"],
+			as_dict=True,
+		)
+		if not invoice:
+			frappe.throw(_("POS Invoice {0} does not exist.").format(frappe.bold(name)))
+		if not global_access and invoice.branch not in assigned_branches:
+			frappe.throw(_("You cannot view a settlement from another branch."), frappe.PermissionError)
+		if opening and invoice.pos_profile != opening.pos_profile:
+			frappe.throw(_("POS Invoice does not belong to the selected POS Opening Entry."), frappe.PermissionError)
 
 
 def sub_pos_close_check(doc,method):
