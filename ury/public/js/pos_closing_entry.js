@@ -5,6 +5,7 @@ const URY_COUNTING_FIELDS = {
 
 frappe.ui.form.on("POS Closing Entry", {
 	refresh(frm) {
+		configure_whole_mzn_display(frm);
 		configure_counting_fields(frm).then(() => refresh_difference_justification(frm));
 	},
 
@@ -138,6 +139,7 @@ async function refresh_commercial_summary(frm) {
 		},
 	});
 	const summary = response.message || {};
+	apply_rounded_invoice_totals(frm, summary);
 
 	frm.clear_table("custom_ury_credit_sales");
 	for (const row of summary.credit_sales || []) {
@@ -153,4 +155,54 @@ async function refresh_commercial_summary(frm) {
 		await frm.set_value(fieldname, summary[fieldname] || 0);
 	}
 	frm.refresh_field("custom_ury_credit_sales");
+}
+
+function apply_rounded_invoice_totals(frm, summary) {
+	const totals = summary.rounded_invoice_totals || {};
+	for (const row of frm.doc.pos_transactions || []) {
+		if (Object.prototype.hasOwnProperty.call(totals, row.pos_invoice)) {
+			row.grand_total = totals[row.pos_invoice];
+		}
+	}
+	frm.doc.grand_total = summary.rounded_grand_total || 0;
+	frm.refresh_field("pos_transactions");
+	frm.refresh_field("grand_total");
+}
+
+function configure_whole_mzn_display(frm) {
+	for (const fieldname of [
+		"grand_total",
+		"net_total",
+		"custom_ury_credit_total",
+		"custom_ury_discount_total",
+		"custom_ury_house_offer_value",
+	]) {
+		if (frm.fields_dict[fieldname]) {
+			frm.set_df_property(fieldname, "precision", 0);
+		}
+	}
+
+	set_grid_currency_precision(frm, "pos_transactions", ["grand_total"]);
+	set_grid_currency_precision(frm, "payment_reconciliation", [
+		"opening_amount",
+		"expected_amount",
+		"closing_amount",
+		"custom_closing_amount",
+		"difference",
+	]);
+	set_grid_currency_precision(frm, "taxes", ["amount"]);
+	set_grid_currency_precision(frm, "custom_ury_credit_sales", [
+		"total_final",
+		"paid_now",
+		"credit_amount",
+	]);
+}
+
+function set_grid_currency_precision(frm, table_fieldname, fieldnames) {
+	const grid = frm.fields_dict[table_fieldname]?.grid;
+	if (!grid) return;
+	for (const fieldname of fieldnames) {
+		grid.update_docfield_property(fieldname, "precision", 0);
+	}
+	frm.refresh_field(table_fieldname);
 }

@@ -120,6 +120,30 @@ class TestURYPosClosingEntryHooks(TestCase):
 		self.assertEqual(summary["custom_ury_house_offer_value"], 50)
 		self.assertEqual(summary["credit_sales"][0]["pos_invoices"], "PI-1, PI-2")
 
+	@patch("ury.ury.hooks.ury_pos_closing_entry.frappe.get_all")
+	def test_closing_uses_the_final_rounded_invoice_totals(self, get_all):
+		get_all.return_value = [
+			frappe._dict(name="POL-1", grand_total=4.5, rounded_total=4),
+			frappe._dict(name="POL-2", grand_total=382.5, rounded_total=382),
+		]
+		doc = frappe._dict(
+			grand_total=0,
+			pos_transactions=[
+				frappe._dict(pos_invoice="POL-1", grand_total=4.5),
+				frappe._dict(pos_invoice="POL-2", grand_total=382.5),
+			],
+		)
+
+		ury_pos_closing_entry.apply_rounded_invoice_totals(doc)
+
+		self.assertEqual(doc.grand_total, 386)
+		self.assertEqual([row.grand_total for row in doc.pos_transactions], [4, 382])
+
+	def test_zero_rounded_total_does_not_make_a_nonzero_sale_free(self):
+		invoice = frappe._dict(grand_total=0.4, rounded_total=0)
+
+		self.assertEqual(ury_pos_closing_entry._settled_invoice_total(invoice), 0.4)
+
 	@patch("ury.ury.hooks.ury_pos_closing_entry.frappe.db.sql")
 	@patch("ury.ury.hooks.ury_pos_closing_entry.frappe.db.get_value")
 	@patch(

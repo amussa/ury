@@ -17,3 +17,5 @@ class TestPOSClosingPrintFormat(TestCase):
 		self.assertIn("custom_ury_discount_total", HTML)
 		self.assertIn("OFERTAS DA CASA", HTML.upper())
 		self.assertIn("Crédito não é valor recebido em caixa", HTML)
+		self.assertIn("precision=0", HTML)
+		self.assertIn("Arredondamento", HTML)

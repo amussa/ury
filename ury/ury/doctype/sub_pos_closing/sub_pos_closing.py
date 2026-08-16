@@ -44,19 +44,30 @@ class SubPOSClosing(Document):
                 "posting_date": ["between", [self.period_start_date, self.period_end_date]],
                 "cashier":self.user
             },
-            fields=["name", "posting_date", "customer", "grand_total", "base_grand_total"]
+            fields=[
+                "name", "posting_date", "customer", "grand_total", "rounded_total",
+                "base_grand_total", "base_rounded_total", "net_total", "total_qty",
+            ]
         )
         
         self.set("pos_transactions", [])
+        self.grand_total = 0
+        self.net_total = 0
+        self.total_quantity = 0
         
         for invoice in invoices:
+            grand_total = flt(invoice.rounded_total) or flt(invoice.grand_total)
+            base_grand_total = flt(invoice.base_rounded_total) or flt(invoice.base_grand_total)
             self.append("pos_transactions", {
                 "pos_invoice": invoice.name,
                 "posting_date": invoice.posting_date,
                 "customer": invoice.customer,
-                "grand_total": invoice.grand_total,
-                "base_grand_total": invoice.base_grand_total
+                "grand_total": grand_total,
+                "base_grand_total": base_grand_total,
             })
+            self.grand_total += grand_total
+            self.net_total += flt(invoice.net_total)
+            self.total_quantity += flt(invoice.total_qty)
 
         multiple_cashier = frappe.db.get_value("POS Profile", self.pos_profile, "custom_enable_multiple_cashier")
         if multiple_cashier:

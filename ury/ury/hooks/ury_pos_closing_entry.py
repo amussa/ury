@@ -13,6 +13,7 @@ def before_save(doc, method):
     sub_pos_close_check(doc, method)
 
 def validate(doc, method):
+	apply_rounded_invoice_totals(doc)
 	populate_commercial_summary(doc)
 	calculate_closing_amount(doc, method)
 	validate_difference_justification(doc)
@@ -52,7 +53,50 @@ def get_commercial_summary(pos_invoices, pos_opening_entry=None):
 	]
 	invoice_names = list(dict.fromkeys(name for name in invoice_names if name))
 	_validate_summary_access(invoice_names, pos_opening_entry)
-	return get_commercial_summary_data(invoice_names, pos_opening_entry=pos_opening_entry)
+	summary = get_commercial_summary_data(invoice_names, pos_opening_entry=pos_opening_entry)
+	rounded_totals = get_rounded_invoice_totals(invoice_names)
+	summary["rounded_invoice_totals"] = rounded_totals
+	summary["rounded_grand_total"] = flt(sum(rounded_totals.values()), 2)
+	return summary
+
+
+def apply_rounded_invoice_totals(doc):
+	"""Keep the closing sales total aligned with the amount actually settled."""
+	rows = doc.get("pos_transactions") or []
+	invoice_names = [row.pos_invoice for row in rows if row.pos_invoice]
+	if not invoice_names:
+		doc.grand_total = 0
+		return
+
+	rounded_totals = get_rounded_invoice_totals(invoice_names)
+	if len(rounded_totals) != len(set(invoice_names)):
+		frappe.throw(_("Unable to load every POS Invoice total for the closing entry."))
+
+	for row in rows:
+		row.grand_total = rounded_totals[row.pos_invoice]
+	doc.grand_total = flt(sum(row.grand_total for row in rows), 2)
+
+
+def get_rounded_invoice_totals(invoice_names):
+	invoice_names = list(dict.fromkeys(invoice_names or []))
+	if not invoice_names:
+		return {}
+
+	invoices = frappe.get_all(
+		"POS Invoice",
+		filters={"name": ["in", invoice_names]},
+		fields=["name", "grand_total", "rounded_total"],
+	)
+	return {
+		invoice.name: _settled_invoice_total(invoice)
+		for invoice in invoices
+	}
+
+
+def _settled_invoice_total(invoice):
+	# This is the same fallback used by ERPNext/URY payment validation: a zero
+	# rounded_total must not turn a small non-zero sale into a free sale.
+	return flt(invoice.get("rounded_total")) or flt(invoice.get("grand_total"))
 
 
 def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):

@@ -72,6 +72,8 @@ HTML = r"""
 {% set counted_total = doc.payment_reconciliation|sum(attribute="closing_amount") %}
 {% set difference_total = doc.payment_reconciliation|sum(attribute="difference") %}
 {% set credit_rows = doc.custom_ury_credit_sales or [] %}
+{% set tax_total = doc.taxes|sum(attribute="amount") %}
+{% set rounding_total = (doc.grand_total or 0) - (doc.net_total or 0) - (tax_total or 0) %}
 {% set reconciliation = namespace(has_difference=false) %}
 {% for row in doc.payment_reconciliation %}
   {% if row.difference %}{% set reconciliation.has_difference = true %}{% endif %}
@@ -99,32 +101,33 @@ HTML = r"""
 <table class="summary">
   <tr><td>Número de vendas</td><td>{{ sale_count }}</td></tr>
   <tr><td>Artigos vendidos</td><td>{{ doc.total_quantity or 0 }}</td></tr>
-  <tr><td>Venda média</td><td>{% if sale_count %}{{ frappe.utils.fmt_money((doc.grand_total or 0) / sale_count, currency=None) }}{% else %}0.00{% endif %}</td></tr>
+  <tr><td>Venda média</td><td>{% if sale_count %}{{ frappe.utils.fmt_money((doc.grand_total or 0) / sale_count, precision=0, currency=None) }}{% else %}0{% endif %}</td></tr>
 </table>
 
 <div class="t-rule-thin"></div>
 <div class="t-section">RESUMO FINANCEIRO - {{ currency }}</div>
 <table class="summary">
-  <tr><td>Vendas líquidas</td><td>{{ frappe.utils.fmt_money(doc.net_total or 0, currency=None) }}</td></tr>
+  <tr><td>Vendas líquidas</td><td>{{ frappe.utils.fmt_money(doc.net_total or 0, precision=0, currency=None) }}</td></tr>
   {% for tax in doc.taxes %}
-  <tr><td>{{ tax.account_head }} ({{ tax.rate }}%)</td><td>{{ frappe.utils.fmt_money(tax.amount or 0, currency=None) }}</td></tr>
+  <tr><td>{{ tax.account_head }} ({{ tax.rate }}%)</td><td>{{ frappe.utils.fmt_money(tax.amount or 0, precision=0, currency=None) }}</td></tr>
   {% endfor %}
+  {% if rounding_total %}<tr><td>Arredondamento</td><td>{{ frappe.utils.fmt_money(rounding_total, precision=0, currency=None) }}</td></tr>{% endif %}
 </table>
 
 <div class="t-rule"></div>
 <table class="summary total">
-  <tr><td>TOTAL VENDAS</td><td>{{ frappe.utils.fmt_money(doc.grand_total or 0, currency=None) }}</td></tr>
+  <tr><td>TOTAL VENDAS</td><td>{{ frappe.utils.fmt_money(doc.grand_total or 0, precision=0, currency=None) }}</td></tr>
 </table>
 
 {% if doc.custom_ury_discount_total or doc.custom_ury_house_offer_count or doc.custom_ury_credit_sales_count %}
 <div class="t-rule-thin"></div>
 <div class="t-section">DESCONTOS, OFERTAS E CRÉDITO</div>
 <table class="summary">
-  <tr><td>Descontos manuais</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_discount_total or 0, currency=None) }}</td></tr>
+  <tr><td>Descontos manuais</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_discount_total or 0, precision=0, currency=None) }}</td></tr>
   <tr><td>Ofertas da casa</td><td>{{ doc.custom_ury_house_offer_count or 0 }}</td></tr>
-  <tr><td>Valor oferecido</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_house_offer_value or 0, currency=None) }}</td></tr>
+  <tr><td>Valor oferecido</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_house_offer_value or 0, precision=0, currency=None) }}</td></tr>
   <tr><td>Vendas a crédito</td><td>{{ doc.custom_ury_credit_sales_count or 0 }}</td></tr>
-  <tr><td>Saldo a crédito</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_credit_total or 0, currency=None) }}</td></tr>
+  <tr><td>Saldo a crédito</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_credit_total or 0, precision=0, currency=None) }}</td></tr>
 </table>
 {% endif %}
 
@@ -135,9 +138,9 @@ HTML = r"""
   <div class="credit-title">{{ credit.customer }}</div>
   <div>POS: {{ credit.pos_invoices }}</div>
   <table>
-    <tr><td>Total</td><td>{{ frappe.utils.fmt_money(credit.total_final or 0, currency=None) }}</td></tr>
-    <tr><td>Pago agora</td><td>{{ frappe.utils.fmt_money(credit.paid_now or 0, currency=None) }}</td></tr>
-    <tr><td>Saldo</td><td>{{ frappe.utils.fmt_money(credit.credit_amount or 0, currency=None) }}</td></tr>
+    <tr><td>Total</td><td>{{ frappe.utils.fmt_money(credit.total_final or 0, precision=0, currency=None) }}</td></tr>
+    <tr><td>Pago agora</td><td>{{ frappe.utils.fmt_money(credit.paid_now or 0, precision=0, currency=None) }}</td></tr>
+    <tr><td>Saldo</td><td>{{ frappe.utils.fmt_money(credit.credit_amount or 0, precision=0, currency=None) }}</td></tr>
     <tr><td>Vencimento</td><td>{{ frappe.utils.formatdate(credit.due_date, "dd-MM-yyyy") }}</td></tr>
     {% if credit.sales_invoice %}<tr><td>Factura</td><td>{{ credit.sales_invoice }}</td></tr>{% endif %}
   </table>
@@ -156,10 +159,10 @@ HTML = r"""
     {% for row in doc.payment_reconciliation %}
     <tr>
       <td>{{ row.mode_of_payment }}</td>
-      <td>{{ frappe.utils.fmt_money(row.expected_amount or 0, currency=None) }}</td>
-      <td>{{ frappe.utils.fmt_money(row.closing_amount or 0, currency=None) }}</td>
+      <td>{{ frappe.utils.fmt_money(row.expected_amount or 0, precision=0, currency=None) }}</td>
+      <td>{{ frappe.utils.fmt_money(row.closing_amount or 0, precision=0, currency=None) }}</td>
       <td{% if row.difference %} class="mismatch"{% endif %}>
-        {% if row.difference and row.difference > 0 %}+{% endif %}{{ frappe.utils.fmt_money(row.difference or 0, currency=None) }}
+        {% if row.difference and row.difference > 0 %}+{% endif %}{{ frappe.utils.fmt_money(row.difference or 0, precision=0, currency=None) }}
         {% if row.difference and row.difference < 0 %}<span class="difference-label">Falta</span>{% elif row.difference and row.difference > 0 %}<span class="difference-label">Excesso</span>{% endif %}
       </td>
     </tr>
@@ -169,10 +172,10 @@ HTML = r"""
 
 <div class="t-rule-thin"></div>
 <table class="summary">
-  <tr><td>Fundo inicial</td><td>{{ frappe.utils.fmt_money(opening_total or 0, currency=None) }}</td></tr>
-  <tr><td>Total no sistema</td><td>{{ frappe.utils.fmt_money(expected_total or 0, currency=None) }}</td></tr>
-  <tr><td>Total contado</td><td>{{ frappe.utils.fmt_money(counted_total or 0, currency=None) }}</td></tr>
-  <tr class="{% if difference_total %}mismatch{% endif %}"><td>Diferença total</td><td>{% if difference_total and difference_total > 0 %}+{% endif %}{{ frappe.utils.fmt_money(difference_total or 0, currency=None) }}</td></tr>
+  <tr><td>Fundo inicial</td><td>{{ frappe.utils.fmt_money(opening_total or 0, precision=0, currency=None) }}</td></tr>
+  <tr><td>Total no sistema</td><td>{{ frappe.utils.fmt_money(expected_total or 0, precision=0, currency=None) }}</td></tr>
+  <tr><td>Total contado</td><td>{{ frappe.utils.fmt_money(counted_total or 0, precision=0, currency=None) }}</td></tr>
+  <tr class="{% if difference_total %}mismatch{% endif %}"><td>Diferença total</td><td>{% if difference_total and difference_total > 0 %}+{% endif %}{{ frappe.utils.fmt_money(difference_total or 0, precision=0, currency=None) }}</td></tr>
 </table>
 
 {% if reconciliation.has_difference %}

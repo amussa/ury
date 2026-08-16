@@ -67,6 +67,7 @@ frappe.ui.form.on("Sub POS Closing", {
 	},
 
 	refresh: function (frm) {
+		configure_whole_mzn_display(frm);
 
 		if (frm.doc.docstatus == 1 && frm.doc.status == "Failed") {
 			const issue = '<a id="jump_to_error" style="text-decoration: underline;">issue</a>';
@@ -161,7 +162,7 @@ frappe.ui.form.on("Sub POS Closing", {
 				callback: (r) => {
 					let pos_invoices = r.message;
 					for (let doc of pos_invoices) {
-						frm.doc.grand_total += flt(doc.grand_total);
+						frm.doc.grand_total += closing_total(doc);
 						frm.doc.net_total += flt(doc.net_total);
 						frm.doc.total_quantity += flt(doc.total_qty);
 						refresh_payments(doc, frm);
@@ -184,7 +185,7 @@ function set_form_data(data, frm) {
 	data.forEach(d => {
 		refresh_payments(d, frm);
 		add_to_pos_transaction(d, frm);
-		frm.doc.grand_total += flt(d.grand_total);
+		frm.doc.grand_total += closing_total(d);
 		frm.doc.net_total += flt(d.net_total);
 		frm.doc.total_quantity += flt(d.total_qty);
 		
@@ -194,8 +195,32 @@ function add_to_pos_transaction(d, frm) {
 	frm.add_child("pos_transactions", {
 		pos_invoice: d.name,
 		posting_date: d.posting_date,
-		grand_total: d.grand_total
+		grand_total: closing_total(d)
 	});
+}
+
+function closing_total(invoice) {
+	return flt(invoice.rounded_total) || flt(invoice.grand_total);
+}
+
+function configure_whole_mzn_display(frm) {
+	for (const fieldname of ["grand_total", "net_total"]) {
+		frm.set_df_property(fieldname, "precision", 0);
+	}
+	for (const [table, fields] of [
+		["pos_transactions", ["grand_total", "base_grand_total"]],
+		[
+			"payment_reconciliation",
+			["opening_amount", "expected_amount", "closing_amount", "difference"],
+		],
+	]) {
+		const grid = frm.fields_dict[table]?.grid;
+		if (!grid) continue;
+		for (const fieldname of fields) {
+			grid.update_docfield_property(fieldname, "precision", 0);
+		}
+		frm.refresh_field(table);
+	}
 }
 
 
