@@ -310,6 +310,7 @@ fixtures = [
                     "POS Invoice Item-custom_ury_manual_discount_type",
                     "POS Invoice Item-custom_ury_manual_discount_input",
                     "POS Invoice Item-custom_ury_manual_discount_amount",
+                    "POS Invoice Item-custom_ury_manual_discount_reason",
                     "POS Invoice-custom_merged_total",
                     "POS Invoice-custom_merged_pos_invoice_details",
                     "POS Invoice-custom_merged_pos_invoice",

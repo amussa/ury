@@ -12,6 +12,7 @@ import { getStockAvailability, StockAvailability } from '../lib/stock-api';
 import { t } from '../i18n';
 import {
   calculateItemDiscountAmount,
+  getPersistedItemManualDiscount,
   type ItemManualDiscount,
 } from '../lib/item-discount';
 
@@ -1134,6 +1135,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
             tax_rate: 0,
             comment: item.comment || '',
             selectedPriceOption,
+            manualDiscount: getPersistedItemManualDiscount(item),
           };
           return {
             ...orderItem,

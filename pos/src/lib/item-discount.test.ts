@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calculateDiscountedLineTotal,
   calculateItemDiscountAmount,
+  getPersistedItemManualDiscount,
 } from './item-discount';
 
 describe('item discount calculations', () => {
@@ -24,5 +25,27 @@ describe('item discount calculations', () => {
 
     expect(calculateItemDiscountAmount(100, 2, discount)).toBe(200);
     expect(calculateDiscountedLineTotal(100, 2, discount)).toBe(0);
+  });
+});
+
+describe('getPersistedItemManualDiscount', () => {
+  it('rehydrates the saved reason together with the discount', () => {
+    expect(getPersistedItemManualDiscount({
+      custom_ury_manual_discount_type: 'Percent',
+      custom_ury_manual_discount_input: 40,
+      custom_ury_manual_discount_reason: 'Aprovação da gerência',
+    })).toEqual({
+      type: 'Percent',
+      value: 40,
+      reason: 'Aprovação da gerência',
+    });
+  });
+
+  it('ignores incomplete persisted discounts', () => {
+    expect(getPersistedItemManualDiscount({
+      custom_ury_manual_discount_type: 'Amount',
+      custom_ury_manual_discount_input: 0,
+      custom_ury_manual_discount_reason: 'Sem valor',
+    })).toBeUndefined();
   });
 });

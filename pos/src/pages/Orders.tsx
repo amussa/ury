@@ -34,6 +34,7 @@ import { formatMergedTableLabel } from '../lib/table-utils';
 import { t } from '../i18n';
 import { showCartMutationError } from '../lib/cart-feedback';
 import PaymentCorrectionDialog from '../components/PaymentCorrectionDialog';
+import { getPersistedItemManualDiscount } from '../lib/item-discount';
 
 function getOrderTableLabel(order: Pick<POSInvoice, 'restaurant_table' | 'custom_merged_tables'>) {
   if (!order.restaurant_table) return null;
@@ -311,14 +312,7 @@ export default function Orders() {
           special_dish: 0 as const,
           tax_rate: 0,
           selectedPriceOption,
-          manualDiscount: item.custom_ury_manual_discount_type
-            && Number(item.custom_ury_manual_discount_input) > 0
-            ? {
-                type: item.custom_ury_manual_discount_type,
-                value: Number(item.custom_ury_manual_discount_input),
-                reason: item.custom_ury_manual_discount_reason || '',
-              }
-            : undefined,
+          manualDiscount: getPersistedItemManualDiscount(item),
         };
       });
       const stockResult = await posStore.hydrateOrderItems(items, stockExcludeInvoice);
