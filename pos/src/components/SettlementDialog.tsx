@@ -28,7 +28,6 @@ import {
   calculateSettlementAllocation,
   isSettlementPreviewCurrent,
   parseSettlementNumber,
-  settlementItemKey,
   settlementPricingKey,
   settlementPreviewKey,
 } from '../lib/settlement-state';
@@ -88,7 +87,6 @@ export default function SettlementDialog({
   const { posProfile } = usePOSStore();
   const [context, setContext] = useState<SettlementContext | null>(null);
   const [customer, setCustomer] = useState<SettlementCustomerInput>({ existing: '' });
-  const [itemDiscounts, setItemDiscounts] = useState<Record<string, DiscountDraft>>({});
   const [invoiceDiscount, setInvoiceDiscount] = useState<DiscountDraft | null>(null);
   const [houseOffer, setHouseOffer] = useState(false);
   const [creditEnabled, setCreditEnabled] = useState(false);
@@ -119,7 +117,6 @@ export default function SettlementDialog({
     setPreviewPricingKey('');
     setContextError(null);
     setPreviewError(null);
-    setItemDiscounts({});
     setInvoiceDiscount(null);
     setHouseOffer(false);
     setCreditEnabled(false);
@@ -155,7 +152,7 @@ export default function SettlementDialog({
       context,
       customer,
       reason,
-      itemDiscounts,
+      itemDiscounts: {},
       invoiceDiscount,
       houseOffer,
       autoPaymentMode: null,
@@ -163,9 +160,8 @@ export default function SettlementDialog({
       dueDate,
       paymentInputs,
     });
-  }, [context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, itemDiscounts, paymentInputs, reason]);
+  }, [context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, paymentInputs, reason]);
 
-  const itemDiscountPayload = useMemo(() => payload?.discounts.items ?? [], [payload]);
   const payments = useMemo(() => payload?.payments ?? [], [payload]);
 
   const validationError = useMemo(() => {
@@ -189,24 +185,8 @@ export default function SettlementDialog({
 
     const hasSpecialOperation = houseOffer
       || creditEnabled
-      || itemDiscountPayload.length > 0
       || !!invoiceDiscount;
     if (hasSpecialOperation && !reason.trim()) return t('settlement.errors.reason_required');
-
-    for (const item of context.items) {
-      const discount = itemDiscounts[settlementItemKey(item)];
-      if (!discount || houseOffer) continue;
-      const value = parseSettlementNumber(discount.value);
-      if (!Number.isFinite(value) || value <= 0) return t('settlement.errors.discount_value_required');
-      if (discount.type === 'Percent' && value > context.limits.max_discount_percentage) {
-        return t('settlement.errors.discount_exceeds_limit', {
-          limit: String(context.limits.max_discount_percentage),
-        });
-      }
-      if (discount.type === 'Amount' && value > item.amount) {
-        return t('settlement.errors.discount_exceeds_item', { item: item.item_name });
-      }
-    }
 
     if (invoiceDiscount && !houseOffer) {
       const value = parseSettlementNumber(invoiceDiscount.value);
@@ -234,7 +214,7 @@ export default function SettlementDialog({
     }
 
     return null;
-  }, [context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, itemDiscountPayload, itemDiscounts, payload, paymentInputs, reason]);
+  }, [context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, payload, paymentInputs, reason]);
 
   const payloadKey = useMemo(() => payload ? settlementPreviewKey(payload) : '', [payload]);
   const payloadPricingKey = useMemo(
@@ -284,9 +264,9 @@ export default function SettlementDialog({
     setHouseOffer(enabled);
     setPreviewError(null);
     if (enabled) {
-      setItemDiscounts({});
       setInvoiceDiscount(null);
       setCreditEnabled(false);
+      if (context) setCustomer({ existing: context.customer.id });
       setPaymentInputs({});
     } else if (context) {
       setPreview(null);
@@ -299,6 +279,8 @@ export default function SettlementDialog({
     setPreviewError(null);
     if (enabled) {
       setPaymentInputs({});
+    } else if (context) {
+      setCustomer({ existing: context.customer.id });
     }
   };
 
@@ -396,6 +378,7 @@ export default function SettlementDialog({
       : t('settlement.actions.pay');
   const formLocked = isSettling || hasSettlementAttempt;
   const hasValidSettlementMethod = houseOffer || creditEnabled || payments.length > 0;
+  const hasSpecialOperation = houseOffer || creditEnabled || !!invoiceDiscount;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -439,27 +422,9 @@ export default function SettlementDialog({
           <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.6fr)_minmax(20rem,0.8fr)]">
             <div className="min-h-0 overflow-y-auto px-6 py-5">
               <div className="space-y-7">
-                <section className="space-y-3" aria-labelledby="settlement-customer-title">
-                  <h3 id="settlement-customer-title" className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-                    <UserRound className="h-5 w-5" />
-                    {t('settlement.customer.title')}
-                  </h3>
-                  <SettlementCustomerEditor
-                    value={customer}
-                    currentCustomer={context.customer}
-                    onChange={setCustomer}
-                    disabled={formLocked}
-                    requiredRealCustomer={creditEnabled}
-                    defaultCustomer={context.default_customer}
-                  />
-                </section>
-
-                <section className="border-t border-gray-200 pt-6">
+                <section>
                   <DiscountEditor
-                    items={context.items}
-                    itemDiscounts={itemDiscounts}
                     invoiceDiscount={invoiceDiscount}
-                    onItemDiscountsChange={setItemDiscounts}
                     onInvoiceDiscountChange={setInvoiceDiscount}
                     houseOffer={houseOffer}
                     onHouseOfferChange={handleHouseOfferChange}
@@ -506,7 +471,7 @@ export default function SettlementDialog({
                   </div>
                 </section>
 
-                <section className="border-t border-gray-200 pt-6">
+                <section className="space-y-4 border-t border-gray-200 pt-6">
                   <CreditPanel
                     available={context.flags.credit}
                     enabled={creditEnabled}
@@ -516,9 +481,27 @@ export default function SettlementDialog({
                     creditAmount={creditAmount}
                     paidNow={paidNow}
                     disabled={formLocked || houseOffer}
-                  />
+                  >
+                    {creditEnabled && (
+                      <div className="space-y-3 rounded-md border border-violet-200 bg-white p-4" aria-labelledby="settlement-customer-title">
+                        <h3 id="settlement-customer-title" className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                          <UserRound className="h-5 w-5 text-violet-700" />
+                          {t('settlement.customer.credit_title')}
+                        </h3>
+                        <SettlementCustomerEditor
+                          value={customer}
+                          currentCustomer={context.customer}
+                          onChange={setCustomer}
+                          disabled={formLocked}
+                          requiredRealCustomer
+                          defaultCustomer={context.default_customer}
+                        />
+                      </div>
+                    )}
+                  </CreditPanel>
                 </section>
 
+                {hasSpecialOperation && (
                 <section className="space-y-2 border-t border-gray-200 pt-6">
                   <label htmlFor="settlement-reason" className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                     <MessageSquareText className="h-4 w-4" />
@@ -534,6 +517,7 @@ export default function SettlementDialog({
                   />
                   <p className="text-xs text-gray-500">{t('settlement.reason.help')}</p>
                 </section>
+                )}
               </div>
             </div>
 
@@ -545,7 +529,7 @@ export default function SettlementDialog({
                   total_before_manual_discount: context.totals.total_before_manual_discount,
                   grand_total: context.totals.grand_total,
                 }}
-                customerLabel={customerLabel}
+                customerLabel={creditEnabled ? customerLabel : undefined}
                 dueDate={creditEnabled ? dueDate : undefined}
                 tableLabel={tableLabel}
                 isLoading={isLoadingPreview}

@@ -64,6 +64,7 @@
     "add_comment": "Add comment",
     "edit_comment": "Edit comment",
     "addon": "Add-on",
+    "item_discount": "Discount: {{value}}",
     "stock_total": "Stock: {{qty}} {{uom}}",
     "stock_remaining": "Remaining: {{qty}} {{uom}}",
     "price_option": "Price: {{option}}",
@@ -338,7 +339,19 @@
     "price_option": "Choose price",
     "normal_price": "Normal",
     "sold_out": "Sold out",
-    "option_available": "{{qty}} {{uom}} available"
+    "option_available": "{{qty}} {{uom}} available",
+    "item_discount": "Discount this item",
+    "item_discount_help": "Saved before the pending bill is printed. An amount is the total discount for the line.",
+    "discount_value": "Discount value",
+    "discount_reason": "Discount reason",
+    "discount_reason_placeholder": "Required reason for the discount",
+    "discount_applied": "Discount applied",
+    "before_discount": "Before discount",
+    "discount_disabled": "Discounts are disabled for this POS profile.",
+    "discount_value_required": "Enter a discount greater than zero.",
+    "discount_exceeds_limit": "The discount cannot exceed {{limit}}%.",
+    "discount_exceeds_line": "The discount cannot exceed the item value.",
+    "discount_reason_required": "Enter the discount reason."
   },
   "order_types": {
     "dine_in": "Dine In",
@@ -365,6 +378,7 @@
     "loading": "Loading secure checkout...",
     "customer": {
       "title": "Customer",
+      "credit_title": "Customer responsible for the credit",
       "new_title": "New customer",
       "choose_existing": "Choose existing",
       "tax_id": "Tax ID (optional)",

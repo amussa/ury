@@ -7,7 +7,7 @@ import { t } from '../i18n';
 interface SettlementSummaryProps {
   preview: SettlementPreview | null;
   fallbackTotals: Pick<SettlementTotals, 'total_catalogue' | 'total_before_manual_discount' | 'grand_total'>;
-  customerLabel: string;
+  customerLabel?: string;
   dueDate?: string;
   tableLabel?: string | null;
   isLoading: boolean;
@@ -109,9 +109,7 @@ export function SettlementSummary({
           value={totals.paid_now}
           className="text-green-700"
         />
-        {totals.change_amount > 0 && (
-          <SummaryRow label={t('settlement.summary.change')} value={totals.change_amount} />
-        )}
+        <SummaryRow label={t('settlement.summary.change')} value={totals.change_amount} />
         {totals.credit_amount > 0 && (
           <SummaryRow
             label={t('settlement.summary.credit_balance')}
@@ -121,18 +119,22 @@ export function SettlementSummary({
         )}
       </div>
 
-      <div className="space-y-2 rounded-lg border border-gray-200 p-4 text-sm">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-gray-600">{t('settlement.summary.customer')}</span>
-          <span className="text-end font-medium text-gray-900">{customerLabel}</span>
+      {(customerLabel || dueDate) && (
+        <div className="space-y-2 rounded-lg border border-gray-200 p-4 text-sm">
+          {customerLabel && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-600">{t('settlement.summary.customer')}</span>
+              <span className="text-end font-medium text-gray-900">{customerLabel}</span>
+            </div>
+          )}
+          {dueDate && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-600">{t('settlement.credit.due_date')}</span>
+              <span className="font-medium text-violet-800">{dueDate}</span>
+            </div>
+          )}
         </div>
-        {dueDate && (
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-gray-600">{t('settlement.credit.due_date')}</span>
-            <span className="font-medium text-violet-800">{dueDate}</span>
-          </div>
-        )}
-      </div>
+      )}
 
       <div aria-live="polite">
         {isLoading ? (

@@ -28,6 +28,7 @@ from ury.ury_pos.cashier import get_single_cashier_opening
 from ury.ury_pos.price_options import (
     MANUAL_DISCOUNT_AMOUNT_FIELD,
     MANUAL_DISCOUNT_INPUT_FIELD,
+    MANUAL_DISCOUNT_REASON_FIELD,
     MANUAL_DISCOUNT_TYPE_FIELD,
     OPTION_FIELD,
     OPTION_LABEL_FIELD,
@@ -35,6 +36,7 @@ from ury.ury_pos.price_options import (
     RATE_BEFORE_MANUAL_DISCOUNT_FIELD,
     STANDARD_OPTION_ID,
     group_menu_promotions,
+    get_expected_rate_after_manual_discount,
     lock_menu_price_options_parent,
     resolve_price_option,
 )
@@ -57,6 +59,7 @@ ITEM_MANUAL_DISCOUNT_FIELDS = (
     MANUAL_DISCOUNT_TYPE_FIELD,
     MANUAL_DISCOUNT_INPUT_FIELD,
     MANUAL_DISCOUNT_AMOUNT_FIELD,
+    MANUAL_DISCOUNT_REASON_FIELD,
 )
 
 
@@ -1050,10 +1053,13 @@ def _reset_commercial_fields(invoice, options):
         _set_if_field(row, MANUAL_DISCOUNT_TYPE_FIELD, None)
         _set_if_field(row, MANUAL_DISCOUNT_INPUT_FIELD, 0)
         _set_if_field(row, MANUAL_DISCOUNT_AMOUNT_FIELD, 0)
+        _set_if_field(row, MANUAL_DISCOUNT_REASON_FIELD, None)
     invoice.calculate_taxes_and_totals()
 
 
-def _apply_item_discount(invoice, row, request, option, max_percentage, precision):
+def _apply_item_discount(
+    invoice, row, request, option, max_percentage, precision, reason=None
+):
     qty = flt(row.qty)
     option_rate = flt(option.rate)
     eligible = _quantize(option_rate * qty, precision)
@@ -1086,6 +1092,7 @@ def _apply_item_discount(invoice, row, request, option, max_percentage, precisio
     _set_if_field(row, MANUAL_DISCOUNT_TYPE_FIELD, request["type"])
     _set_if_field(row, MANUAL_DISCOUNT_INPUT_FIELD, float(value))
     _set_if_field(row, MANUAL_DISCOUNT_AMOUNT_FIELD, float(manual_amount))
+    _set_if_field(row, MANUAL_DISCOUNT_REASON_FIELD, reason or None)
     return float(manual_amount)
 
 
@@ -1156,10 +1163,27 @@ def _prepare_documents(
     )
     reason = str(payload.get("reason") or "").strip()
 
-    has_manual_discount = bool(discounts["items"] or discounts["invoice"])
-    if house_offer and (credit_enabled or discounts["items"] or discounts["invoice"]):
+    has_persisted_item_discount = any(
+        row.get(MANUAL_DISCOUNT_TYPE_FIELD)
+        for invoice in invoices
+        for row in invoice.get("items", [])
+    )
+    has_manual_discount = bool(
+        has_persisted_item_discount
+        or discounts["items"]
+        or discounts["invoice"]
+    )
+    if house_offer and (
+        credit_enabled
+        or has_persisted_item_discount
+        or discounts["items"]
+        or discounts["invoice"]
+    ):
         _fail(_("House Offer cannot be combined with another discount or credit."))
-    if (has_manual_discount or house_offer or credit_enabled) and not reason:
+    needs_checkout_reason = bool(
+        discounts["items"] or discounts["invoice"] or house_offer or credit_enabled
+    )
+    if needs_checkout_reason and not reason:
         _fail(_("A reason is required for discount, House Offer or credit."))
     if len(reason) > 500:
         _fail(_("The settlement reason is too long."))
@@ -1179,6 +1203,7 @@ def _prepare_documents(
 
     working = [copy.deepcopy(invoice) for invoice in invoices]
     options_by_invoice = {}
+    persisted_item_discounts = {}
     total_catalogue = 0.0
     price_option_reduction = 0.0
     for invoice in working:
@@ -1196,6 +1221,33 @@ def _prepare_documents(
             )
         options = _authoritative_options(invoice, for_update=for_update)
         options_by_invoice[invoice.name] = options
+        for row in invoice.get("items", []):
+            discount_type = row.get(MANUAL_DISCOUNT_TYPE_FIELD)
+            if not discount_type:
+                continue
+            expected_rate = get_expected_rate_after_manual_discount(
+                row, options[row.name].rate
+            )
+            row_reason = str(row.get(MANUAL_DISCOUNT_REASON_FIELD) or "").strip()
+            if expected_rate is None or flt(row.rate) != flt(expected_rate):
+                _fail(
+                    _(
+                        "The saved discount for {0} is inconsistent. Edit the order and apply it again."
+                    ).format(frappe.bold(row.item_name))
+                )
+            if not row_reason:
+                _fail(
+                    _(
+                        "The saved discount for {0} has no reason. Edit the order and apply it again."
+                    ).format(frappe.bold(row.item_name))
+                )
+            persisted_item_discounts[(invoice.name, row.name)] = {
+                "pos_invoice": invoice.name,
+                "item_row": row.name,
+                "type": discount_type,
+                "value": flt(row.get(MANUAL_DISCOUNT_INPUT_FIELD)),
+                "reason": row_reason,
+            }
         _reset_commercial_fields(invoice, options)
         total_catalogue += sum(
             flt(options[row.name].base_rate) * flt(row.qty) for row in invoice.items
@@ -1207,9 +1259,16 @@ def _prepare_documents(
 
     before_manual_totals = [_total(invoice) for invoice in working]
     total_before_manual = sum(before_manual_totals)
-    request_by_row = {
+    request_by_row = dict(persisted_item_discounts)
+    request_by_row.update({
         (row["pos_invoice"], row["item_row"]): row for row in discounts["items"]
-    }
+    })
+    if not reason and persisted_item_discounts:
+        reason = "; ".join(
+            dict.fromkeys(
+                request["reason"] for request in persisted_item_discounts.values()
+            )
+        )[:500]
     discount_audit_rows = []
     item_discount_total = 0.0
     for invoice in working:
@@ -1226,6 +1285,7 @@ def _prepare_documents(
                 options[row.name],
                 max_percentage,
                 precision,
+                request.get("reason") or reason,
             )
             item_discount_total += amount
             discount_audit_rows.append(
@@ -1747,10 +1807,25 @@ def get_settlement_context(invoice):
                     "price_list_rate": flt(row.price_list_rate),
                     "price_option": row.get(OPTION_FIELD) or STANDARD_OPTION_ID,
                     "price_option_label": row.get(OPTION_LABEL_FIELD),
+                    "manual_discount_type": row.get(
+                        MANUAL_DISCOUNT_TYPE_FIELD
+                    ),
+                    "manual_discount_input": flt(
+                        row.get(MANUAL_DISCOUNT_INPUT_FIELD)
+                    ),
+                    "manual_discount_amount": flt(
+                        row.get(MANUAL_DISCOUNT_AMOUNT_FIELD)
+                    ),
+                    "manual_discount_reason": row.get(
+                        MANUAL_DISCOUNT_REASON_FIELD
+                    ),
                 }
             )
     total_catalogue = sum(flt(row["price_list_rate"]) * flt(row["qty"]) for row in items)
     grand_total = sum(_total(doc) for doc in invoices)
+    saved_item_discount = sum(
+        flt(row.get("manual_discount_amount")) for row in items
+    )
     return {
         "invoice": invoice,
         "invoices": [doc.name for doc in invoices],
@@ -1760,7 +1835,9 @@ def get_settlement_context(invoice):
         "items": items,
         "totals": {
             "total_catalogue": _number(total_catalogue, precision),
-            "total_before_manual_discount": _number(grand_total, precision),
+            "total_before_manual_discount": _number(
+                grand_total + saved_item_discount, precision
+            ),
             "grand_total": _number(grand_total, precision),
         },
         "payment_modes": list(modes.values()),

@@ -66,7 +66,13 @@ const OrderPanel = () => {
   const calculateItemTotal = (item: typeof activeOrders[0]) => {
     const basePrice = item.selectedPriceOption?.rate ?? item.selectedVariant?.price ?? item.price;
     const addonsTotal = item.selectedAddons?.reduce((sum, addon) => sum + addon.price, 0) || 0;
-    return (basePrice + addonsTotal) * item.quantity;
+    const discountAmount = item.manualDiscount
+      ? item.manualDiscount.type === 'Percent'
+        ? basePrice * item.quantity * item.manualDiscount.value / 100
+        : item.manualDiscount.value
+      : 0;
+    return Math.max(0, basePrice * item.quantity - discountAmount)
+      + addonsTotal * item.quantity;
   };
 
   const total = activeOrders.reduce(
@@ -192,6 +198,7 @@ const OrderPanel = () => {
           qty: item.quantity,
           comment: item.comment || undefined,
           price_option: item.selectedPriceOption?.id,
+          manual_discount: item.manualDiscount,
         })),
         no_of_pax: 1,
         pos_profile: posProfile.name,
@@ -354,6 +361,15 @@ const OrderPanel = () => {
                         {t('cart.price_option', { option: item.selectedPriceOption.label })}
                         {' · '}
                         {formatCurrency(item.selectedPriceOption.rate)}
+                      </p>
+                    )}
+                    {item.manualDiscount && (
+                      <p className="text-xs font-medium text-green-700">
+                        {t('cart.item_discount', {
+                          value: item.manualDiscount.type === 'Percent'
+                            ? `${item.manualDiscount.value}%`
+                            : formatCurrency(item.manualDiscount.value),
+                        })}
                       </p>
                     )}
                     {item.configurationRole === 'addon' && (

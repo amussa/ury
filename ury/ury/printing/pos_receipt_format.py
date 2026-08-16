@@ -77,7 +77,13 @@ Caixa:   {{ doc.cashier[:W - 9] }}
 {{ thin }}
 {%- for item in doc.items %}
 {{ (item.item_name or "")[:W] }}
+{%- if item.get("custom_ury_manual_discount_amount") %}
+{{ row("  " ~ qty(item.qty) ~ " x " ~ money(item.get("custom_ury_rate_before_manual_discount") or item.rate), money((item.get("custom_ury_rate_before_manual_discount") or item.rate) * item.qty)) }}
+{{ row("  Desconto artigo", "-" ~ money(item.get("custom_ury_manual_discount_amount"))) }}
+{{ row("  Liquido", money(item.amount)) }}
+{%- else %}
 {{ row("  " ~ qty(item.qty) ~ " x " ~ money(item.rate), money(item.amount)) }}
+{%- endif %}
 {%- endfor %}
 {{ thin }}
 {{ row("Subtotal", money(doc.net_total)) }}
@@ -91,7 +97,13 @@ Caixa:   {{ doc.cashier[:W - 9] }}
 Conta junta: {{ doc.custom_merged_pos_invoice }}
 {%- for item in merged_items %}
 {{ (item.item_name or "")[:W] }}
+{%- if item.get("custom_ury_manual_discount_amount") %}
+{{ row("  " ~ qty(item.qty) ~ " x " ~ money(item.get("custom_ury_rate_before_manual_discount") or item.rate), money((item.get("custom_ury_rate_before_manual_discount") or item.rate) * item.qty)) }}
+{{ row("  Desconto artigo", "-" ~ money(item.get("custom_ury_manual_discount_amount"))) }}
+{{ row("  Liquido", money(item.amount)) }}
+{%- else %}
 {{ row("  " ~ qty(item.qty) ~ " x " ~ money(item.rate), money(item.amount)) }}
+{%- endif %}
 {%- endfor %}
 {{ row("Subtotal conta junta" if is_commercial_merge else "Total conta junta", money(merged_subtotal)) }}
 {%- for tax in merged_taxes %}
@@ -228,10 +240,22 @@ HTML = r"""
 <table>
   {% for item in doc.items %}
   <tr><td colspan="2">{{ item.item_name }}</td></tr>
+  {% if item.get("custom_ury_manual_discount_amount") %}
+  <tr>
+    <td>&nbsp;&nbsp;{{ item.qty }} x {{ frappe.utils.fmt_money(item.get("custom_ury_rate_before_manual_discount") or item.rate, currency=None) }}</td>
+    <td class="t-right">{{ frappe.utils.fmt_money((item.get("custom_ury_rate_before_manual_discount") or item.rate) * item.qty, currency=None) }}</td>
+  </tr>
+  <tr>
+    <td>&nbsp;&nbsp;Desconto artigo</td>
+    <td class="t-right">-{{ frappe.utils.fmt_money(item.get("custom_ury_manual_discount_amount"), currency=None) }}</td>
+  </tr>
+  <tr><td>&nbsp;&nbsp;Líquido</td><td class="t-right">{{ frappe.utils.fmt_money(item.amount, currency=None) }}</td></tr>
+  {% else %}
   <tr>
     <td>&nbsp;&nbsp;{{ item.qty }} x {{ frappe.utils.fmt_money(item.rate, currency=None) }}</td>
     <td class="t-right">{{ frappe.utils.fmt_money(item.amount, currency=None) }}</td>
   </tr>
+  {% endif %}
   {% endfor %}
 </table>
 
@@ -256,10 +280,22 @@ HTML = r"""
 <table>
   {% for item in merged_items %}
   <tr><td colspan="2">{{ item.item_name }}</td></tr>
+  {% if item.get("custom_ury_manual_discount_amount") %}
+  <tr>
+    <td>&nbsp;&nbsp;{{ item.qty }} x {{ frappe.utils.fmt_money(item.get("custom_ury_rate_before_manual_discount") or item.rate, currency=None) }}</td>
+    <td class="t-right">{{ frappe.utils.fmt_money((item.get("custom_ury_rate_before_manual_discount") or item.rate) * item.qty, currency=None) }}</td>
+  </tr>
+  <tr>
+    <td>&nbsp;&nbsp;Desconto artigo</td>
+    <td class="t-right">-{{ frappe.utils.fmt_money(item.get("custom_ury_manual_discount_amount"), currency=None) }}</td>
+  </tr>
+  <tr><td>&nbsp;&nbsp;Líquido</td><td class="t-right">{{ frappe.utils.fmt_money(item.amount, currency=None) }}</td></tr>
+  {% else %}
   <tr>
     <td>&nbsp;&nbsp;{{ item.qty }} x {{ frappe.utils.fmt_money(item.rate, currency=None) }}</td>
     <td class="t-right">{{ frappe.utils.fmt_money(item.amount, currency=None) }}</td>
   </tr>
+  {% endif %}
   {% endfor %}
   <tr>
     <td>{% if is_commercial_merge %}Subtotal{% else %}Total{% endif %} conta junta</td>

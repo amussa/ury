@@ -64,6 +64,7 @@
     "add_comment": "Ajouter un commentaire",
     "edit_comment": "Modifier le commentaire",
     "addon": "Supplément",
+    "item_discount": "Remise : {{value}}",
     "stock_total": "Stock : {{qty}} {{uom}}",
     "stock_remaining": "Restant : {{qty}} {{uom}}",
     "price_option": "Prix : {{option}}",
@@ -338,7 +339,19 @@
     "price_option": "Choisir le prix",
     "normal_price": "Normal",
     "sold_out": "Épuisé",
-    "option_available": "{{qty}} {{uom}} disponible(s)"
+    "option_available": "{{qty}} {{uom}} disponible(s)",
+    "item_discount": "Remise sur cet article",
+    "item_discount_help": "Enregistrée avant l’impression de l’addition. Un montant est la remise totale de la ligne.",
+    "discount_value": "Valeur de la remise",
+    "discount_reason": "Motif de la remise",
+    "discount_reason_placeholder": "Motif obligatoire de la remise",
+    "discount_applied": "Remise appliquée",
+    "before_discount": "Avant remise",
+    "discount_disabled": "Les remises sont désactivées pour ce profil POS.",
+    "discount_value_required": "Saisissez une remise supérieure à zéro.",
+    "discount_exceeds_limit": "La remise ne peut pas dépasser {{limit}} %.",
+    "discount_exceeds_line": "La remise ne peut pas dépasser la valeur de l’article.",
+    "discount_reason_required": "Indiquez le motif de la remise."
   },
   "order_types": {
     "dine_in": "Sur place",
@@ -365,6 +378,7 @@
     "loading": "Chargement du paiement sécurisé...",
     "customer": {
       "title": "Client",
+      "credit_title": "Client responsable du crédit",
       "new_title": "Nouveau client",
       "choose_existing": "Choisir un client existant",
       "tax_id": "Identifiant fiscal (facultatif)",

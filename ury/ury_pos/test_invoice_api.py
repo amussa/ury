@@ -58,6 +58,11 @@ class TestInvoiceAPI(TestCase):
                     amount=320,
                     custom_ury_price_option="PROMO-1",
                     custom_ury_price_option_label="Promotion",
+                    custom_ury_rate_before_manual_discount=80,
+                    custom_ury_manual_discount_type="Amount",
+                    custom_ury_manual_discount_input=20,
+                    custom_ury_manual_discount_amount=20,
+                    custom_ury_manual_discount_reason="Manager approval",
                 )
             ],
             taxes=[],
@@ -72,6 +77,16 @@ class TestInvoiceAPI(TestCase):
         )
         self.assertEqual(
             item_details[0]["custom_ury_price_option_label"], "Promotion"
+        )
+        self.assertEqual(
+            item_details[0]["custom_ury_manual_discount_type"], "Amount"
+        )
+        self.assertEqual(
+            item_details[0]["custom_ury_manual_discount_amount"], 20
+        )
+        self.assertEqual(
+            item_details[0]["custom_ury_manual_discount_reason"],
+            "Manager approval",
         )
 
     @patch("ury.ury_pos.api._enrich_split_group_meta", side_effect=lambda rows: rows)

@@ -71,6 +71,7 @@
         "add_comment": "إضافة تعليق",
         "edit_comment": "تعديل التعليق",
         "addon": "إضافة",
+        "item_discount": "الخصم: {{value}}",
         "stock_total": "المخزون: {{qty}} {{uom}}",
         "stock_remaining": "المتبقي: {{qty}} {{uom}}",
         "price_option": "السعر: {{option}}",
@@ -262,7 +263,19 @@
         "price_option": "اختر السعر",
         "normal_price": "عادي",
         "sold_out": "نفد",
-        "option_available": "متاح {{qty}} {{uom}}"
+        "option_available": "متاح {{qty}} {{uom}}",
+        "item_discount": "خصم هذا الصنف",
+        "item_discount_help": "يُحفظ قبل طباعة الفاتورة المعلقة. القيمة هي إجمالي خصم السطر.",
+        "discount_value": "قيمة الخصم",
+        "discount_reason": "سبب الخصم",
+        "discount_reason_placeholder": "سبب الخصم إلزامي",
+        "discount_applied": "تم تطبيق الخصم",
+        "before_discount": "قبل الخصم",
+        "discount_disabled": "الخصومات معطلة في ملف نقطة البيع هذا.",
+        "discount_value_required": "أدخل خصماً أكبر من صفر.",
+        "discount_exceeds_limit": "لا يمكن أن يتجاوز الخصم {{limit}}٪.",
+        "discount_exceeds_line": "لا يمكن أن يتجاوز الخصم قيمة الصنف.",
+        "discount_reason_required": "أدخل سبب الخصم."
     },
     "order_types": {
         "dine_in": "طلب محلي",
@@ -289,6 +302,7 @@
         "loading": "جارٍ تحميل الدفع الآمن...",
         "customer": {
             "title": "العميل",
+            "credit_title": "العميل المسؤول عن الائتمان",
             "new_title": "عميل جديد",
             "choose_existing": "اختيار عميل موجود",
             "tax_id": "الرقم الضريبي (اختياري)",

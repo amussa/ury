@@ -19,6 +19,7 @@ PRICE_OPTION_REDUCTION_FIELD = "custom_ury_price_option_reduction"
 MANUAL_DISCOUNT_TYPE_FIELD = "custom_ury_manual_discount_type"
 MANUAL_DISCOUNT_INPUT_FIELD = "custom_ury_manual_discount_input"
 MANUAL_DISCOUNT_AMOUNT_FIELD = "custom_ury_manual_discount_amount"
+MANUAL_DISCOUNT_REASON_FIELD = "custom_ury_manual_discount_reason"
 
 MANUAL_DISCOUNT_FIELDS = (
     RATE_BEFORE_MANUAL_DISCOUNT_FIELD,
@@ -26,6 +27,7 @@ MANUAL_DISCOUNT_FIELDS = (
     MANUAL_DISCOUNT_TYPE_FIELD,
     MANUAL_DISCOUNT_INPUT_FIELD,
     MANUAL_DISCOUNT_AMOUNT_FIELD,
+    MANUAL_DISCOUNT_REASON_FIELD,
 )
 
 
@@ -846,11 +848,15 @@ def validate_pos_invoice_price_options(invoice):
     )
     settlement_name = invoice.get("custom_ury_settlement")
     active_settlement = getattr(frappe.flags, "ury_pos_settlement", None)
+    active_order_invoice = getattr(
+        frappe.flags, "ury_order_manual_discount_invoice", None
+    )
     validate_price_option_row_prices(
         invoice.get("items", []),
         menu,
         base_rates,
         manual_discounts_authorized=bool(
-            settlement_name and active_settlement == settlement_name
+            (settlement_name and active_settlement == settlement_name)
+            or active_order_invoice is invoice
         ),
     )

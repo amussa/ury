@@ -15,6 +15,11 @@ export interface POSInvoiceItem {
   discount_amount: number;
   custom_ury_price_option?: string | null;
   custom_ury_price_option_label?: string | null;
+  custom_ury_rate_before_manual_discount?: number | null;
+  custom_ury_manual_discount_type?: 'Percent' | 'Amount' | null;
+  custom_ury_manual_discount_input?: number | null;
+  custom_ury_manual_discount_amount?: number | null;
+  custom_ury_manual_discount_reason?: string | null;
 }
 
 export interface POSInvoice {
@@ -75,6 +80,11 @@ export interface SyncOrderRequest {
     qty: number;
     comment?: string;
     price_option?: string;
+    manual_discount?: {
+      type: 'Percent' | 'Amount';
+      value: number;
+      reason: string;
+    };
   }>;
   no_of_pax: number;
   mode_of_payment?: string;

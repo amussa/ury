@@ -10,6 +10,10 @@ import { getTableOrder, TableOrder } from '../lib/order-api';
 import { getPaymentModes } from '../lib/payment-api';
 import { getStockAvailability, StockAvailability } from '../lib/stock-api';
 import { t } from '../i18n';
+import {
+  calculateItemDiscountAmount,
+  type ItemManualDiscount,
+} from '../lib/item-discount';
 
 // Constants
 const MAX_QUANTITY = 99;
@@ -54,6 +58,7 @@ export interface OrderItem extends MenuItem {
   configurationRole?: 'main' | 'addon';
   configuredAddons?: Array<{ id: string; name: string; price: number }>;
   selectedPriceOption?: PriceOption;
+  manualDiscount?: ItemManualDiscount;
 }
 
 export type CartMutationFailureCode =
@@ -201,7 +206,10 @@ const generateUniqueId = (item: OrderItem): string => {
 const calculateItemPrice = (item: OrderItem): number => {
   const basePrice = item.selectedPriceOption?.rate ?? item.selectedVariant?.price ?? item.price;
   const addonsTotal = item.selectedAddons?.reduce((sum, addon) => sum + addon.price, 0) || 0;
-  return basePrice + addonsTotal;
+  const itemDiscountPerUnit = item.quantity > 0
+    ? calculateItemDiscountAmount(basePrice, item.quantity, item.manualDiscount) / item.quantity
+    : 0;
+  return Math.max(0, basePrice - itemDiscountPerUnit) + addonsTotal;
 };
 
 const SUCCESS_RESULT: CartMutationResult = { ok: true };

@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import json
+import math
 from contextlib import contextmanager
 
 import frappe
@@ -27,6 +28,12 @@ from ury.ury_pos.cashier import get_single_cashier_opening
 from ury.ury_pos.price_options import (
     OPTION_FIELD,
     OPTION_LABEL_FIELD,
+    MANUAL_DISCOUNT_AMOUNT_FIELD,
+    MANUAL_DISCOUNT_INPUT_FIELD,
+    MANUAL_DISCOUNT_REASON_FIELD,
+    MANUAL_DISCOUNT_TYPE_FIELD,
+    PRICE_OPTION_REDUCTION_FIELD,
+    RATE_BEFORE_MANUAL_DISCOUNT_FIELD,
     STANDARD_OPTION_ID,
     apply_price_option_to_row,
     get_menu_promotions,
@@ -58,6 +65,98 @@ def _temporary_order_actor(user):
     finally:
         if should_switch:
             frappe.set_user(original_user)
+
+
+@contextmanager
+def _authorise_order_manual_discounts(invoice, enabled):
+    """Authorise audited line discounts only for this controlled order save."""
+    fieldname = "ury_order_manual_discount_invoice"
+    previous = getattr(frappe.flags, fieldname, None)
+    if enabled:
+        setattr(frappe.flags, fieldname, invoice)
+    try:
+        yield
+    finally:
+        setattr(frappe.flags, fieldname, previous)
+
+
+def _apply_order_line_manual_discount(row, request_item, option, pos_profile):
+    """Apply a browser request to an authoritative menu price option.
+
+    ``Amount`` is the discount over the complete line, not per unit.  The
+    browser never supplies the final rate: it is rebuilt here from the locked
+    Normal/Promotion price and recorded in the same audit fields used by the
+    commercial settlement service.
+    """
+    request = request_item.get("manual_discount")
+    if not request:
+        return False
+    if isinstance(request, str):
+        try:
+            request = json.loads(request)
+        except (TypeError, ValueError):
+            frappe.throw(_("Item discount must be a valid object."))
+    if not isinstance(request, dict):
+        frappe.throw(_("Item discount must be a valid object."))
+    if not cint(pos_profile.get("custom_enable_discount")):
+        frappe.throw(_("Discounts are disabled for this POS Profile."))
+
+    discount_type = str(request.get("type") or "").strip()
+    try:
+        input_value = float(request.get("value"))
+    except (TypeError, ValueError):
+        input_value = 0
+    reason = str(request.get("reason") or "").strip()
+    configured_limit = pos_profile.get("custom_ury_max_discount_percentage")
+    max_percentage = 100.0 if configured_limit in (None, "") else flt(configured_limit)
+    qty = flt(row.get("qty"))
+    option_rate = flt(option.rate)
+    eligible = flt(option_rate * qty, 2)
+
+    if discount_type not in ("Percent", "Amount"):
+        frappe.throw(_("Choose a valid item discount type."))
+    if not math.isfinite(input_value) or input_value <= 0:
+        frappe.throw(_("Enter an item discount greater than zero."))
+    if not reason:
+        frappe.throw(_("A reason is required for an item discount."))
+    if len(reason) > 500:
+        frappe.throw(_("The item discount reason is too long."))
+    if qty <= 0 or eligible <= 0:
+        frappe.throw(_("The selected item cannot receive a discount."))
+    if max_percentage < 0 or max_percentage > 100:
+        frappe.throw(_("The POS Profile discount limit is invalid."))
+
+    if discount_type == "Percent":
+        if input_value > max_percentage or input_value > 100:
+            frappe.throw(_("The item discount exceeds the POS Profile limit."))
+        manual_amount = flt(eligible * input_value / 100, 2)
+    else:
+        manual_amount = flt(input_value, 2)
+        effective_percentage = manual_amount * 100 / eligible
+        if effective_percentage > max_percentage + 1e-9:
+            frappe.throw(_("The item discount exceeds the POS Profile limit."))
+
+    if manual_amount <= 0:
+        frappe.throw(_("The item discount rounds to zero."))
+    if manual_amount > eligible:
+        frappe.throw(_("The item discount exceeds the eligible line amount."))
+
+    net_rate = flt(option_rate - manual_amount / qty, 6)
+    normal_rate = flt(option.base_rate)
+    row["rate"] = net_rate
+    row["discount_amount"] = flt(normal_rate - net_rate, 6)
+    row["discount_percentage"] = (
+        flt((normal_rate - net_rate) * 100 / normal_rate, 6)
+        if normal_rate
+        else 0
+    )
+    row[RATE_BEFORE_MANUAL_DISCOUNT_FIELD] = option_rate
+    row[PRICE_OPTION_REDUCTION_FIELD] = normal_rate - option_rate
+    row[MANUAL_DISCOUNT_TYPE_FIELD] = discount_type
+    row[MANUAL_DISCOUNT_INPUT_FIELD] = input_value
+    row[MANUAL_DISCOUNT_AMOUNT_FIELD] = manual_amount
+    row[MANUAL_DISCOUNT_REASON_FIELD] = reason
+    return True
 
 
 def _persisted_order_item_values(item):
@@ -1260,6 +1359,13 @@ def _free_tables_if_no_open_invoices(
 
 
 def _copy_invoice_item_fields(item_row, qty):
+    original_qty = flt(item_row.qty)
+    ratio = flt(qty) / original_qty if original_qty else 0
+    manual_amount = flt(item_row.get(MANUAL_DISCOUNT_AMOUNT_FIELD)) * ratio
+    manual_type = item_row.get(MANUAL_DISCOUNT_TYPE_FIELD)
+    manual_input = item_row.get(MANUAL_DISCOUNT_INPUT_FIELD)
+    if manual_type == "Amount":
+        manual_input = manual_amount
     return dict(
         item_code=item_row.item_code,
         item_name=item_row.item_name,
@@ -1271,6 +1377,18 @@ def _copy_invoice_item_fields(item_row, qty):
         custom_course=item_row.get("custom_course"),
         custom_ury_price_option=item_row.get(OPTION_FIELD),
         custom_ury_price_option_label=item_row.get(OPTION_LABEL_FIELD),
+        custom_ury_rate_before_manual_discount=item_row.get(
+            RATE_BEFORE_MANUAL_DISCOUNT_FIELD
+        ),
+        custom_ury_price_option_reduction=item_row.get(
+            PRICE_OPTION_REDUCTION_FIELD
+        ),
+        custom_ury_manual_discount_type=manual_type,
+        custom_ury_manual_discount_input=manual_input,
+        custom_ury_manual_discount_amount=manual_amount,
+        custom_ury_manual_discount_reason=item_row.get(
+            MANUAL_DISCOUNT_REASON_FIELD
+        ),
         cost_center=item_row.cost_center,
         uom=item_row.uom,
         conversion_factor=item_row.conversion_factor,
@@ -1369,7 +1487,14 @@ def split_bill(source_invoice, items_to_move, customer=None):
             items_to_remove.append(item)
         else:
             new_invoice.append("items", _copy_invoice_item_fields(item, move_qty))
+            remaining_ratio = (flt(item.qty) - move_qty) / flt(item.qty)
+            remaining_manual_amount = flt(
+                item.get(MANUAL_DISCOUNT_AMOUNT_FIELD)
+            ) * remaining_ratio
             item.qty -= move_qty
+            item.set(MANUAL_DISCOUNT_AMOUNT_FIELD, remaining_manual_amount)
+            if item.get(MANUAL_DISCOUNT_TYPE_FIELD) == "Amount":
+                item.set(MANUAL_DISCOUNT_INPUT_FIELD, remaining_manual_amount)
 
     for item in items_to_remove:
         source.remove(item)
@@ -1815,6 +1940,7 @@ def _sync_order(
     )
     if not append_only:
         invoice.items = []
+    has_order_manual_discounts = False
     
     if append_only:
         menu = locked_waiter_menu
@@ -1922,6 +2048,19 @@ def _sync_order(
                 ),
                 price_option,
             )
+            if item.get("manual_discount"):
+                if not promotion_menu:
+                    frappe.throw(
+                        _(
+                            "Item discounts require a Price List linked to a URY Menu."
+                        )
+                    )
+                has_order_manual_discounts = (
+                    _apply_order_line_manual_discount(
+                        row_values, item, price_option, posprofile
+                    )
+                    or has_order_manual_discounts
+                )
             invoice.append("items", row_values)
 
     # Populate warehouse/UOM conversion before validating the final payload.
@@ -1960,9 +2099,16 @@ def _sync_order(
         if row.get(OPTION_FIELD)
         and row.get(OPTION_FIELD) != STANDARD_OPTION_ID
     ]
+    manual_discount_item_codes = [
+        row.get("item_code")
+        for row in invoice.items
+        if row.get(MANUAL_DISCOUNT_TYPE_FIELD)
+    ]
     price_option_item_codes = list(
         dict.fromkeys(
-            active_promoted_item_codes + selected_promotional_item_codes
+            active_promoted_item_codes
+            + selected_promotional_item_codes
+            + manual_discount_item_codes
         )
     )
     base_rates = (
@@ -2002,6 +2148,7 @@ def _sync_order(
             invoice.items,
             promotion_menu if not append_only else menu,
             base_rates,
+            manual_discounts_authorized=has_order_manual_discounts,
         )
 
     waiter_price_list_flag = "ury_waiter_expected_price_list"
@@ -2010,7 +2157,9 @@ def _sync_order(
     )
     if append_only:
         setattr(frappe.flags, waiter_price_list_flag, expected_price_list)
-    with _temporary_order_actor(opening.user if append_only else None):
+    with _temporary_order_actor(opening.user if append_only else None), _authorise_order_manual_discounts(
+        invoice, has_order_manual_discounts
+    ):
         try:
             if append_only:
                 invoice.save(ignore_permissions=True)
@@ -2029,6 +2178,7 @@ def _sync_order(
             invoice.items,
             promotion_menu if not append_only else menu,
             base_rates,
+            manual_discounts_authorized=has_order_manual_discounts,
         )
     if append_only and invoice.selling_price_list != expected_price_list:
         frappe.throw(

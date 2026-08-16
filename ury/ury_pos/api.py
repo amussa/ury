@@ -1462,6 +1462,21 @@ def getPosInvoiceItems(invoice):
                 "custom_ury_price_option_label": items.get(
                     "custom_ury_price_option_label"
                 ),
+                "custom_ury_rate_before_manual_discount": items.get(
+                    "custom_ury_rate_before_manual_discount"
+                ),
+                "custom_ury_manual_discount_type": items.get(
+                    "custom_ury_manual_discount_type"
+                ),
+                "custom_ury_manual_discount_input": items.get(
+                    "custom_ury_manual_discount_input"
+                ),
+                "custom_ury_manual_discount_amount": items.get(
+                    "custom_ury_manual_discount_amount"
+                ),
+                "custom_ury_manual_discount_reason": items.get(
+                    "custom_ury_manual_discount_reason"
+                ),
             }
         )
     taxDetail = orderdItems.get("taxes") or []

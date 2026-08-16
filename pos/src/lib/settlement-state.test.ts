@@ -103,6 +103,16 @@ function previewFor(payload: SettlementPayload): SettlementPreview {
 }
 
 describe('buildSettlementPayload', () => {
+  it('keeps item discounts out of the payment payload when checkout supplies none', () => {
+    const payload = buildPayload({
+      invoiceDiscount: { type: 'Percent', value: '5' },
+      paymentInputs: { Cash: '95' },
+    });
+
+    expect(payload.discounts.items).toEqual([]);
+    expect(payload.discounts.invoice).toEqual({ type: 'Percent', value: 5 });
+  });
+
   it('normalises discounts and payments in authoritative context order', () => {
     const payload = buildPayload({
       itemDiscounts: {

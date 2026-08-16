@@ -75,6 +75,11 @@ interface EditableInvoiceItem {
   description?: string | null;
   custom_ury_price_option?: string | null;
   custom_ury_price_option_label?: string | null;
+  custom_ury_rate_before_manual_discount?: number | null;
+  custom_ury_manual_discount_type?: 'Percent' | 'Amount' | null;
+  custom_ury_manual_discount_input?: number | null;
+  custom_ury_manual_discount_amount?: number | null;
+  custom_ury_manual_discount_reason?: string | null;
 }
 
 interface EditableInvoiceDocument {
@@ -306,6 +311,14 @@ export default function Orders() {
           special_dish: 0 as const,
           tax_rate: 0,
           selectedPriceOption,
+          manualDiscount: item.custom_ury_manual_discount_type
+            && Number(item.custom_ury_manual_discount_input) > 0
+            ? {
+                type: item.custom_ury_manual_discount_type,
+                value: Number(item.custom_ury_manual_discount_input),
+                reason: item.custom_ury_manual_discount_reason || '',
+              }
+            : undefined,
         };
       });
       const stockResult = await posStore.hydrateOrderItems(items, stockExcludeInvoice);

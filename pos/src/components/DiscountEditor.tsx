@@ -1,19 +1,11 @@
-import { Gift, Percent, Tag } from 'lucide-react';
+import { Gift, Percent, ReceiptText } from 'lucide-react';
 import { Button, Input, cn } from '@ury/ui';
-import { formatCurrency } from '@ury/core';
-import type {
-  SettlementContextItem,
-  SettlementDiscountType,
-} from '../lib/settlement-api';
+import type { SettlementDiscountType } from '../lib/settlement-api';
 import { t } from '../i18n';
 
 export interface DiscountDraft {
   type: SettlementDiscountType;
   value: string;
-}
-
-function settlementItemKey(item: Pick<SettlementContextItem, 'pos_invoice' | 'item_row'>) {
-  return `${item.pos_invoice}\u0000${item.item_row}`;
 }
 
 interface DiscountTypeButtonsProps {
@@ -23,12 +15,7 @@ interface DiscountTypeButtonsProps {
   amountLabel: string;
 }
 
-function DiscountTypeButtons({
-  value,
-  onChange,
-  disabled,
-  amountLabel,
-}: DiscountTypeButtonsProps) {
+function DiscountTypeButtons({ value, onChange, disabled, amountLabel }: DiscountTypeButtonsProps) {
   return (
     <div className="inline-flex overflow-hidden rounded-md border border-gray-200" role="group">
       <Button
@@ -58,10 +45,7 @@ function DiscountTypeButtons({
 }
 
 interface DiscountEditorProps {
-  items: SettlementContextItem[];
-  itemDiscounts: Record<string, DiscountDraft>;
   invoiceDiscount: DiscountDraft | null;
-  onItemDiscountsChange: (discounts: Record<string, DiscountDraft>) => void;
   onInvoiceDiscountChange: (discount: DiscountDraft | null) => void;
   houseOffer: boolean;
   onHouseOfferChange: (enabled: boolean) => void;
@@ -71,11 +55,9 @@ interface DiscountEditorProps {
   maxPercentage: number;
 }
 
+/** Checkout-level actions only. Item discounts are applied before checkout. */
 export function DiscountEditor({
-  items,
-  itemDiscounts,
   invoiceDiscount,
-  onItemDiscountsChange,
   onInvoiceDiscountChange,
   houseOffer,
   onHouseOfferChange,
@@ -87,7 +69,6 @@ export function DiscountEditor({
   const amountLabel = currency === 'MZN'
     ? 'MT'
     : currency || t('settlement.discount.amount_short');
-  const hasMultipleInvoices = new Set(items.map((item) => item.pos_invoice)).size > 1;
 
   if (!enabled) {
     return (
@@ -98,113 +79,7 @@ export function DiscountEditor({
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 font-semibold text-gray-900">
-            <Tag className="h-4 w-4" />
-            {t('settlement.discount.items_title')}
-          </h3>
-          <p className="mt-1 text-xs text-gray-500">{t('settlement.discount.items_help')}</p>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        {items.map((item) => {
-          const key = settlementItemKey(item);
-          const discount = itemDiscounts[key];
-          const selected = !!discount;
-          const inputMaximum = discount?.type === 'Percent'
-            ? maxPercentage
-            : Math.max(0, item.amount);
-
-          return (
-            <div
-              key={key}
-              className={cn(
-                'rounded-lg border p-3 transition-colors',
-                selected ? 'border-primary-200 bg-primary-50/30' : 'border-gray-200'
-              )}
-            >
-              <div className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={selected}
-                  onChange={(event) => {
-                    if (event.target.checked) {
-                      onItemDiscountsChange({
-                        ...itemDiscounts,
-                        [key]: { type: 'Percent', value: '' },
-                      });
-                    } else {
-                      const next = { ...itemDiscounts };
-                      delete next[key];
-                      onItemDiscountsChange(next);
-                    }
-                  }}
-                  disabled={disabled || houseOffer}
-                  className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                  aria-label={t('settlement.discount.select_item', { item: item.item_name })}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-gray-900">{item.item_name}</p>
-                      <p className="text-xs text-gray-500">
-                        {t('settlement.discount.item_base', {
-                          qty: String(item.qty),
-                          amount: formatCurrency(item.amount),
-                        })}
-                      </p>
-                      {hasMultipleInvoices && (
-                        <p className="text-xs text-gray-500">
-                          {t('settlement.discount.invoice_source', { invoice: item.pos_invoice })}
-                        </p>
-                      )}
-                      {item.price_option_label && (
-                        <p className="text-xs font-medium text-blue-700">{item.price_option_label}</p>
-                      )}
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900">
-                      {formatCurrency(item.amount)}
-                    </span>
-                  </div>
-
-                  {discount && (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <DiscountTypeButtons
-                        value={discount.type}
-                        onChange={(type) => onItemDiscountsChange({
-                          ...itemDiscounts,
-                          [key]: { type, value: '' },
-                        })}
-                        disabled={disabled || houseOffer}
-                        amountLabel={amountLabel}
-                      />
-                      <Input
-                        type="number"
-                        min="0"
-                        max={inputMaximum}
-                        step="0.01"
-                        value={discount.value}
-                        onChange={(event) => onItemDiscountsChange({
-                          ...itemDiscounts,
-                          [key]: { ...discount, value: event.target.value },
-                        })}
-                        className="w-36"
-                        placeholder={discount.type === 'Percent' ? '%' : amountLabel}
-                        disabled={disabled || houseOffer}
-                        aria-label={t('settlement.discount.item_value', { item: item.item_name })}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
+    <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 p-4">
         <div className="flex items-start gap-3">
           <input
@@ -217,6 +92,7 @@ export function DiscountEditor({
             className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
             aria-label={t('settlement.discount.invoice_title')}
           />
+          <ReceiptText className="mt-0.5 h-5 w-5 text-green-700" />
           <div className="flex-1">
             <p className="font-medium text-gray-900">{t('settlement.discount.invoice_title')}</p>
             <p className="text-xs text-gray-500">{t('settlement.discount.invoice_help')}</p>

@@ -85,6 +85,20 @@ class TestPOSReceiptFormat(TestCase):
 			),
 			(
 				self._document(
+					docstatus=0,
+					items=[SimpleNamespace(
+						item_name="Fatia de bolo",
+						qty=2,
+						rate=135,
+						amount=270,
+						custom_ury_rate_before_manual_discount=150,
+						custom_ury_manual_discount_amount=30,
+					)],
+				),
+				("Desconto artigo", "Pagamento: pendente"),
+			),
+			(
+				self._document(
 					name="POS-MIXED",
 					grand_total=175,
 					rounded_total=175,
@@ -309,4 +323,9 @@ class TestPOSReceiptFormat(TestCase):
 			"custom_ury_credit_due_date": None,
 		}
 		values.update(overrides)
+		for fieldname in ("items", "custom_merged_pos_invoice_details"):
+			values[fieldname] = [
+				item if isinstance(item, _Receipt) else _Receipt(**vars(item))
+				for item in values.get(fieldname, [])
+			]
 		return _Receipt(**values)

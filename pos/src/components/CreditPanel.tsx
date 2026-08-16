@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { CalendarDays, CreditCard } from 'lucide-react';
 import { Input, cn } from '@ury/ui';
 import { formatCurrency } from '@ury/core';
@@ -12,6 +13,7 @@ interface CreditPanelProps {
   creditAmount: number;
   paidNow: number;
   disabled?: boolean;
+  children?: ReactNode;
 }
 
 export function CreditPanel({
@@ -23,6 +25,7 @@ export function CreditPanel({
   creditAmount,
   paidNow,
   disabled,
+  children,
 }: CreditPanelProps) {
   const now = new Date();
   const minimumDueDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -70,6 +73,8 @@ export function CreditPanel({
               min={minimumDueDate}
             />
           </label>
+
+          {children}
 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-md bg-white p-3">

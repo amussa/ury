@@ -635,6 +635,16 @@ def get_custom_fields():
 				"no_copy": 1,
 				"module": "URY",
 			},
+			{
+				"fieldname": "custom_ury_manual_discount_reason",
+				"fieldtype": "Small Text",
+				"label": "Manual Discount Reason",
+				"insert_after": "custom_ury_manual_discount_amount",
+				"hidden": 1,
+				"read_only": 1,
+				"no_copy": 1,
+				"module": "URY",
+			},
 		],
 
 		"Sales Invoice Item": [

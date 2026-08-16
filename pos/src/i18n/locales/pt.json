@@ -13,7 +13,7 @@
   "stock": { "available": "Stock: {{qty}} {{uom}}", "not_tracked": "Sem controlo de stock", "selected_items": "itens selecionados" },
   "pos_sidebar": { "categories": "Categorias", "all_items": "Todos os itens" },
   "cart": {
-    "empty_title": "O carrinho está vazio", "empty_subtitle": "Adicione itens para iniciar o pedido", "click_to_add": "Clique nos itens para adicioná-los", "double_click_hint": "Clique duas vezes para ver opções de personalização", "clear_cart": "Limpar carrinho", "total": "Total", "add_new_order": "Adicionar novo pedido", "update_order": "Atualizar pedido", "updating_order": "A atualizar pedido...", "processing_order": "A processar pedido...", "loading_order": "A carregar detalhes do pedido...", "edit_item": "Editar item", "add_comment": "Adicionar comentário", "edit_comment": "Editar comentário", "addon": "Extra", "stock_total": "Stock: {{qty}} {{uom}}", "stock_remaining": "Restante: {{qty}} {{uom}}", "price_option": "Preço: {{option}}", "price_option_remaining": "Restante em {{option}}: {{qty}} {{uom}}"
+    "empty_title": "O carrinho está vazio", "empty_subtitle": "Adicione itens para iniciar o pedido", "click_to_add": "Clique nos itens para adicioná-los", "double_click_hint": "Clique duas vezes para ver opções de personalização", "clear_cart": "Limpar carrinho", "total": "Total", "add_new_order": "Adicionar novo pedido", "update_order": "Atualizar pedido", "updating_order": "A atualizar pedido...", "processing_order": "A processar pedido...", "loading_order": "A carregar detalhes do pedido...", "edit_item": "Editar item", "add_comment": "Adicionar comentário", "edit_comment": "Editar comentário", "addon": "Extra", "item_discount": "Desconto: {{value}}", "stock_total": "Stock: {{qty}} {{uom}}", "stock_remaining": "Restante: {{qty}} {{uom}}", "price_option": "Preço: {{option}}", "price_option_remaining": "Restante em {{option}}: {{qty}} {{uom}}"
   },
   "order": {
     "select_to_view": "Selecione um pedido para ver os detalhes", "items_title": "Itens do pedido", "taxes_charges": "Impostos e encargos", "cancel_order": "Cancelar pedido", "enter_cancel_reason": "Indique o motivo do cancelamento", "print": "Imprimir", "payment": "Pagamento", "order_actions": "Ações do pedido"
@@ -51,7 +51,7 @@
   },
   "footer": { "pos": "POS", "table": "Mesas", "orders": "Pedidos" },
   "product_dialog": {
-    "special_instructions": "Instruções especiais", "special_instructions_placeholder": "Adicione instruções especiais ou notas para este item...", "quantity": "Quantidade", "variants": "Variantes", "addons": "Extras", "loading_addons": "A carregar extras...", "no_addons": "Sem extras", "total": "Total", "update_order": "Atualizar pedido", "add_to_order": "Adicionar ao pedido", "checking_stock": "A verificar stock...", "price_option": "Escolher preço", "normal_price": "Normal", "sold_out": "Esgotado", "option_available": "{{qty}} {{uom}} disponíveis"
+    "special_instructions": "Instruções especiais", "special_instructions_placeholder": "Adicione instruções especiais ou notas para este item...", "quantity": "Quantidade", "variants": "Variantes", "addons": "Extras", "loading_addons": "A carregar extras...", "no_addons": "Sem extras", "total": "Total", "update_order": "Atualizar pedido", "add_to_order": "Adicionar ao pedido", "checking_stock": "A verificar stock...", "price_option": "Escolher preço", "normal_price": "Normal", "sold_out": "Esgotado", "option_available": "{{qty}} {{uom}} disponíveis", "item_discount": "Desconto neste artigo", "item_discount_help": "Fica gravado antes de imprimir a conta. Um valor em MT é o desconto total da linha.", "discount_value": "Valor do desconto", "discount_reason": "Motivo do desconto", "discount_reason_placeholder": "Motivo obrigatório do desconto", "discount_applied": "Desconto aplicado", "before_discount": "Antes do desconto", "discount_disabled": "Os descontos estão desactivados neste perfil POS.", "discount_value_required": "Introduza um desconto superior a zero.", "discount_exceeds_limit": "O desconto não pode exceder {{limit}}%.", "discount_exceeds_line": "O desconto não pode exceder o valor do artigo.", "discount_reason_required": "Indique o motivo do desconto."
   },
   "order_types": { "dine_in": "Na mesa", "take_away": "Take-away", "delivery": "Entrega", "phone_in": "Por telefone", "aggregators": "Agregadores" },
   "order_status_types": { "draft": "Rascunho", "unbilled": "Não faturado", "recently_paid": "Pago recentemente", "paid": "Pago", "consolidated": "Consolidado", "return": "Devolução", "unpaid": "Por pagar", "partly_paid": "Parcialmente pago", "overdue": "Vencido", "credit": "Crédito" },
@@ -61,6 +61,7 @@
     "loading": "A carregar o checkout seguro...",
     "customer": {
       "title": "Cliente",
+      "credit_title": "Cliente responsável pelo crédito",
       "new_title": "Novo cliente",
       "choose_existing": "Escolher existente",
       "tax_id": "NUIT (opcional)",

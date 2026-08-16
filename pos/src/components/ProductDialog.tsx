@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, ChangeEvent } from 'react';
-import { X, Plus, Minus, Loader2 } from 'lucide-react';
+import { X, Plus, Minus, Loader2, Percent, Tag } from 'lucide-react';
 import { OrderItem, usePOSStore } from '../store/pos-store';
 import { cn } from '@ury/ui';
 import { formatCurrency } from '@ury/core';
@@ -8,6 +8,10 @@ import { db } from '@ury/core';
 import { t } from '../i18n';
 import { showCartMutationError } from '../lib/cart-feedback';
 import type { PriceOption } from '../lib/menu-api';
+import {
+  calculateItemDiscountAmount,
+  type ItemDiscountType,
+} from '../lib/item-discount';
 
 interface Variant {
   id: string;
@@ -79,6 +83,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
     activeOrders,
     menuItems,
     stockByItem,
+    posProfile,
   } = usePOSStore();
 
   const handleClose = useCallback(() => {
@@ -186,6 +191,17 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
   );
   const [quantity, setQuantity] = useState<string>(editMode ? initialQuantity?.toString() || '0' : '0');
   const [comments, setComments] = useState<string>(itemToReplace?.comment || existingCartItem?.comment || '');
+  const initialManualDiscount = initialReplacementItemRef.current?.manualDiscount;
+  const [manualDiscountEnabled, setManualDiscountEnabled] = useState(Boolean(initialManualDiscount));
+  const [manualDiscountType, setManualDiscountType] = useState<ItemDiscountType>(
+    initialManualDiscount?.type || 'Percent',
+  );
+  const [manualDiscountValue, setManualDiscountValue] = useState(
+    initialManualDiscount?.value ? String(initialManualDiscount.value) : '',
+  );
+  const [manualDiscountReason, setManualDiscountReason] = useState(
+    initialManualDiscount?.reason || '',
+  );
   const [isApplying, setIsApplying] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const configurationIdRef = useRef(
@@ -278,7 +294,39 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
     getAddonPriceOption(addon.id)?.rate ?? addon.price
   );
   const addonsTotal = selectedAddons.reduce((sum, addon) => sum + getAddonRate(addon), 0);
-  const total = (basePrice + addonsTotal) * numericQuantity;
+  const parsedManualDiscountValue = Number(manualDiscountValue);
+  const manualDiscount = manualDiscountEnabled
+    && Number.isFinite(parsedManualDiscountValue)
+    && parsedManualDiscountValue > 0
+    ? {
+        type: manualDiscountType,
+        value: parsedManualDiscountValue,
+        reason: manualDiscountReason.trim(),
+      }
+    : undefined;
+  const manualDiscountAmount = calculateItemDiscountAmount(
+    basePrice,
+    numericQuantity,
+    manualDiscount,
+  );
+  const itemTotalBeforeDiscount = basePrice * numericQuantity;
+  const total = Math.max(0, itemTotalBeforeDiscount - manualDiscountAmount)
+    + addonsTotal * numericQuantity;
+  const discountEnabledForProfile = Number(posProfile?.enable_discount ?? 0) === 1;
+  const maxDiscountPercentage = Number(posProfile?.custom_ury_max_discount_percentage ?? 100);
+  const manualDiscountError = manualDiscountEnabled
+    ? !discountEnabledForProfile
+      ? t('product_dialog.discount_disabled')
+      : !Number.isFinite(parsedManualDiscountValue) || parsedManualDiscountValue <= 0
+        ? t('product_dialog.discount_value_required')
+        : manualDiscountType === 'Percent' && parsedManualDiscountValue > maxDiscountPercentage
+          ? t('product_dialog.discount_exceeds_limit', { limit: String(maxDiscountPercentage) })
+          : manualDiscountType === 'Amount' && parsedManualDiscountValue > itemTotalBeforeDiscount
+            ? t('product_dialog.discount_exceeds_line')
+            : !manualDiscountReason.trim()
+              ? t('product_dialog.discount_reason_required')
+              : null
+    : null;
   const getReplacementQuantity = (itemCode: string) => replacementItems.reduce(
     (sum, item) => sum + (item.item === itemCode ? item.quantity : 0),
     0,
@@ -403,6 +451,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
         ...addon,
         price: getAddonRate(addon),
       })),
+      manualDiscount,
     };
     // Add each selected add-on as a separate cart line. The store validates
     // every item in one batch and commits the complete snapshot only on success.
@@ -791,8 +840,111 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
               <div className="flex items-center justify-center text-gray-400 text-sm">{t('product_dialog.no_addons')}</div>
             )}
           </div>
+
+          {discountEnabledForProfile && (
+            <div className="mb-6 rounded-lg border border-gray-200 p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={manualDiscountEnabled}
+                  onChange={(event) => setManualDiscountEnabled(event.target.checked)}
+                  disabled={isApplying}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <Tag className="mt-0.5 h-5 w-5 text-green-700" />
+                <span>
+                  <span className="block font-semibold text-gray-900">
+                    {t('product_dialog.item_discount')}
+                  </span>
+                  <span className="mt-1 block text-xs text-gray-500">
+                    {t('product_dialog.item_discount_help')}
+                  </span>
+                </span>
+              </label>
+
+              {manualDiscountEnabled && (
+                <div className="mt-4 space-y-3 border-t border-gray-200 pt-4">
+                  <div className="flex gap-2">
+                    <div className="inline-flex overflow-hidden rounded-md border border-gray-200" role="group">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className={cn(
+                          'rounded-none px-3',
+                          manualDiscountType === 'Percent' && 'bg-primary-50 text-primary-700',
+                        )}
+                        onClick={() => {
+                          setManualDiscountType('Percent');
+                          setManualDiscountValue('');
+                        }}
+                        disabled={isApplying}
+                        aria-pressed={manualDiscountType === 'Percent'}
+                      >
+                        <Percent className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className={cn(
+                          'rounded-none border-s px-3',
+                          manualDiscountType === 'Amount' && 'bg-primary-50 text-primary-700',
+                        )}
+                        onClick={() => {
+                          setManualDiscountType('Amount');
+                          setManualDiscountValue('');
+                        }}
+                        disabled={isApplying}
+                        aria-pressed={manualDiscountType === 'Amount'}
+                      >
+                        MT
+                      </Button>
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={manualDiscountType === 'Percent'
+                        ? maxDiscountPercentage
+                        : itemTotalBeforeDiscount}
+                      step="0.01"
+                      value={manualDiscountValue}
+                      onChange={(event) => setManualDiscountValue(event.target.value)}
+                      placeholder={manualDiscountType === 'Percent' ? '%' : 'MT'}
+                      disabled={isApplying}
+                      aria-label={t('product_dialog.discount_value')}
+                    />
+                  </div>
+                  <Input
+                    value={manualDiscountReason}
+                    onChange={(event) => setManualDiscountReason(event.target.value)}
+                    placeholder={t('product_dialog.discount_reason_placeholder')}
+                    disabled={isApplying}
+                    maxLength={500}
+                    aria-label={t('product_dialog.discount_reason')}
+                  />
+                  {manualDiscountAmount > 0 && !manualDiscountError && (
+                    <div className="flex items-center justify-between text-sm text-green-700">
+                      <span>{t('product_dialog.discount_applied')}</span>
+                      <strong>-{formatCurrency(manualDiscountAmount)}</strong>
+                    </div>
+                  )}
+                  {manualDiscountError && (
+                    <p className="text-sm text-red-600">{manualDiscountError}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Always show total section at the end */}
           <div className="mt-auto pt-2 border-t border-gray-200">
+            {manualDiscountAmount > 0 && !manualDiscountError && (
+              <div className="mb-2 flex justify-between text-sm text-gray-500">
+                <span>{t('product_dialog.before_discount')}</span>
+                <span className="line-through">{formatCurrency(itemTotalBeforeDiscount + addonsTotal * numericQuantity)}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center text-lg font-semibold">
               <span>{t('product_dialog.total')}&nbsp;</span>
               <span>{formatCurrency(total)}</span>
@@ -809,6 +961,7 @@ const ProductDialog: React.FC<ProductDialogProps> = ({
                 || selectedOptionExceedsAvailability
                 || (priceOptions.length > 0 && !selectedPriceOption)
                 || selectedAddonsExceedStock
+                || !!manualDiscountError
               }
             >
               {isApplying ? (

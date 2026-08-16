@@ -32,6 +32,10 @@ export interface SettlementContextItem {
   price_list_rate?: number;
   price_option?: string | null;
   price_option_label?: string | null;
+  manual_discount_type?: SettlementDiscountType | null;
+  manual_discount_input?: number;
+  manual_discount_amount?: number;
+  manual_discount_reason?: string | null;
 }
 
 export interface SettlementPaymentMode {
