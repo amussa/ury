@@ -4,10 +4,27 @@ import frappe
 
 from ury.ury.doctype.ury_order.ury_order import (
     _apply_order_line_manual_discount,
+    _get_price_validation_item_codes,
 )
 
 
 class TestOrderItemDiscount(TestCase):
+    def test_discount_validation_includes_normal_sibling_rows(self):
+        rows = [
+            frappe._dict(item_code="Crepes"),
+            frappe._dict(item_code="Arroz-Mariscos"),
+        ]
+
+        self.assertEqual(
+            _get_price_validation_item_codes(rows, ["Arroz-Mariscos"]),
+            ["Crepes", "Arroz-Mariscos"],
+        )
+
+    def test_discount_validation_is_skipped_without_protected_rows(self):
+        rows = [frappe._dict(item_code="Crepes")]
+
+        self.assertEqual(_get_price_validation_item_codes(rows, []), [])
+
     def test_percentage_is_rebuilt_from_authoritative_promotion_rate(self):
         row = {
             "item_code": "CAKE",

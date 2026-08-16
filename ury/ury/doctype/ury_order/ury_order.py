@@ -80,6 +80,25 @@ def _authorise_order_manual_discounts(invoice, enabled):
         setattr(frappe.flags, fieldname, previous)
 
 
+def _get_price_validation_item_codes(invoice_items, protected_item_codes):
+    """Return the complete row set whenever protected pricing is validated.
+
+    The price validators receive every invoice row, including ordinary sibling
+    rows.  Their authoritative price and stock maps must therefore cover that
+    same complete set when at least one promotion or manual discount activates
+    protected validation.
+    """
+    if not protected_item_codes:
+        return []
+    return list(
+        dict.fromkeys(
+            row.get("item_code")
+            for row in invoice_items
+            if row.get("item_code")
+        )
+    )
+
+
 def _apply_order_line_manual_discount(row, request_item, option, pos_profile):
     """Apply a browser request to an authoritative menu price option.
 
@@ -2111,11 +2130,14 @@ def _sync_order(
             + manual_discount_item_codes
         )
     )
+    price_validation_item_codes = _get_price_validation_item_codes(
+        invoice.items, price_option_item_codes
+    )
     base_rates = (
         get_authoritative_item_prices(
-            price_option_item_codes, price_list, for_update=True
+            price_validation_item_codes, price_list, for_update=True
         )
-        if price_option_item_codes
+        if price_validation_item_codes
         else {}
     )
     stock_lock_items = _get_stock_lock_item_codes(ordered_qty)
@@ -2127,9 +2149,9 @@ def _sync_order(
         exclude_invoice=exclude_invoice,
         locked_bin_qty=locked_bin_qty,
     )
-    if price_option_item_codes:
+    if price_validation_item_codes:
         physical_details = _get_stock_details(
-            price_option_item_codes,
+            price_validation_item_codes,
             posprofile.warehouse,
             exclude_invoice=exclude_invoice,
             for_update=True,
@@ -2173,7 +2195,7 @@ def _sync_order(
                 waiter_price_list_flag,
                 previous_waiter_price_list,
             )
-    if price_option_item_codes:
+    if price_validation_item_codes:
         validate_price_option_row_prices(
             invoice.items,
             promotion_menu if not append_only else menu,

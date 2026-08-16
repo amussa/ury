@@ -1564,7 +1564,7 @@ class TestWaiterAPI(TestCase):
             source.index("locked_promotion_base_rates ="),
         )
         self.assertIn(
-            "price_option_item_codes, price_list, for_update=True",
+            "price_validation_item_codes, price_list, for_update=True",
             source,
         )
         self.assertIn("for_update=True,\n        )", source)
