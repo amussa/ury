@@ -37,6 +37,22 @@ export function parseSettlementNumber(value: string): number {
   return Number(value);
 }
 
+/** Return the unpaid balance before filling a chosen payment method. */
+export function calculateRemainingPayment(
+  paymentInputs: Record<string, string>,
+  targetMode: string,
+  grandTotal: number
+): number {
+  const otherPayments = Object.entries(paymentInputs)
+    .filter(([mode]) => mode !== targetMode)
+    .reduce((sum, [, value]) => {
+      const amount = parseSettlementNumber(value);
+      return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
+    }, 0);
+
+  return Math.max(0, grandTotal - otherPayments);
+}
+
 export function settlementItemKey(item: {
   pos_invoice: string;
   item_row: string;
@@ -114,6 +130,14 @@ export function buildSettlementPayload({
 
 export function settlementPreviewKey(payload: SettlementPayload): string {
   return JSON.stringify(payload);
+}
+
+/** Identify pricing inputs independently from the payment values being edited. */
+export function settlementPricingKey(payload: SettlementPayload): string {
+  const pricing: Partial<SettlementPayload> = { ...payload };
+  delete pricing.payments;
+  delete pricing.auto_payment_mode;
+  return JSON.stringify(pricing);
 }
 
 /** A preview is authoritative only for the byte-for-byte current payload. */

@@ -9,9 +9,11 @@ import {
 } from './settlement-api';
 import {
   buildSettlementPayload,
+  calculateRemainingPayment,
   calculateSettlementAllocation,
   isSettlementPreviewCurrent,
   settlementItemKey,
+  settlementPricingKey,
   settlementPreviewKey,
 } from './settlement-state';
 
@@ -216,6 +218,18 @@ describe('strict settlement preview identity', () => {
     expect(isSettlementPreviewCurrent(preview, key, payload, true)).toBe(false);
     expect(isSettlementPreviewCurrent(null, key, payload, false)).toBe(false);
   });
+
+  it('keeps the pricing identity stable while payment values are edited', () => {
+    const empty = buildPayload({ paymentInputs: {} });
+    const partial = buildPayload({ paymentInputs: { Cash: '30' } });
+    const discounted = buildPayload({
+      paymentInputs: { Cash: '30' },
+      invoiceDiscount: { type: 'Percent', value: '10' },
+    });
+
+    expect(settlementPricingKey(empty)).toBe(settlementPricingKey(partial));
+    expect(settlementPricingKey(partial)).not.toBe(settlementPricingKey(discounted));
+  });
 });
 
 describe('credit allocation', () => {
@@ -240,6 +254,21 @@ describe('credit allocation', () => {
       true,
       { paid_now: 55, credit_amount: 45 }
     )).toEqual({ tenderedAmount: 60, paidNow: 55, creditAmount: 45 });
+  });
+});
+
+describe('payment method auto-fill', () => {
+  it('keeps every payment method empty until the cashier chooses one', () => {
+    expect(buildPayload({ paymentInputs: {} }).payments).toEqual([]);
+  });
+
+  it('fills the full balance for the first method explicitly chosen', () => {
+    expect(calculateRemainingPayment({}, 'Cash', 100)).toBe(100);
+  });
+
+  it('fills only the balance left by other methods in a mixed payment', () => {
+    expect(calculateRemainingPayment({ Cash: '30' }, 'Card', 100)).toBe(70);
+    expect(calculateRemainingPayment({ Cash: '120' }, 'Card', 100)).toBe(0);
   });
 });
 

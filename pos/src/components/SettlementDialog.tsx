@@ -24,10 +24,12 @@ import {
 } from '../lib/settlement-api';
 import {
   buildSettlementPayload,
+  calculateRemainingPayment,
   calculateSettlementAllocation,
   isSettlementPreviewCurrent,
   parseSettlementNumber,
   settlementItemKey,
+  settlementPricingKey,
   settlementPreviewKey,
 } from '../lib/settlement-state';
 import {
@@ -95,16 +97,15 @@ export default function SettlementDialog({
   const [paymentInputs, setPaymentInputs] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<SettlementPreview | null>(null);
   const [previewKey, setPreviewKey] = useState('');
+  const [previewPricingKey, setPreviewPricingKey] = useState('');
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [isSettling, setIsSettling] = useState(false);
   const [hasSettlementAttempt, setHasSettlementAttempt] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [autoPaymentMode, setAutoPaymentMode] = useState<string | null>(null);
   const previewSequence = useRef(0);
   const idempotencyKey = useRef(createIdempotencyKey());
-  const lastAutoPayment = useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -112,11 +113,10 @@ export default function SettlementDialog({
     let cancelled = false;
     previewSequence.current += 1;
     idempotencyKey.current = createIdempotencyKey();
-    setAutoPaymentMode(null);
-    lastAutoPayment.current = 0;
     setContext(null);
     setPreview(null);
     setPreviewKey('');
+    setPreviewPricingKey('');
     setContextError(null);
     setPreviewError(null);
     setItemDiscounts({});
@@ -134,17 +134,6 @@ export default function SettlementDialog({
         setContext(result);
         setCustomer({ existing: result.customer.id });
         setDueDate(result.suggested_due_date || futureDate(30));
-
-        const defaultMode = result.payment_modes.find((mode) => mode.default && mode.type === 'Cash')
-          ?? result.payment_modes.find((mode) => mode.type === 'Cash')
-          ?? result.payment_modes.find((mode) => mode.default)
-          ?? result.payment_modes[0];
-        if (defaultMode && result.totals.grand_total > 0) {
-          const amount = result.totals.grand_total;
-          setAutoPaymentMode(defaultMode.id);
-          lastAutoPayment.current = amount;
-          setPaymentInputs({ [defaultMode.id]: amount.toFixed(result.precision) });
-        }
       })
       .catch((error) => {
         if (!cancelled) {
@@ -169,12 +158,12 @@ export default function SettlementDialog({
       itemDiscounts,
       invoiceDiscount,
       houseOffer,
-      autoPaymentMode,
+      autoPaymentMode: null,
       creditEnabled,
       dueDate,
       paymentInputs,
     });
-  }, [autoPaymentMode, context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, itemDiscounts, paymentInputs, reason]);
+  }, [context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, itemDiscounts, paymentInputs, reason]);
 
   const itemDiscountPayload = useMemo(() => payload?.discounts.items ?? [], [payload]);
   const payments = useMemo(() => payload?.payments ?? [], [payload]);
@@ -248,6 +237,10 @@ export default function SettlementDialog({
   }, [context, creditEnabled, customer, dueDate, houseOffer, invoiceDiscount, itemDiscountPayload, itemDiscounts, payload, paymentInputs, reason]);
 
   const payloadKey = useMemo(() => payload ? settlementPreviewKey(payload) : '', [payload]);
+  const payloadPricingKey = useMemo(
+    () => payload ? settlementPricingKey(payload) : '',
+    [payload]
+  );
   const previewIsCurrent = isSettlementPreviewCurrent(
     preview,
     previewKey,
@@ -273,6 +266,7 @@ export default function SettlementDialog({
           if (sequence !== previewSequence.current) return;
           setPreview(result);
           setPreviewKey(payloadKey);
+          setPreviewPricingKey(payloadPricingKey);
         })
         .catch((error) => {
           if (sequence !== previewSequence.current) return;
@@ -284,25 +278,7 @@ export default function SettlementDialog({
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [hasSettlementAttempt, isSettling, open, payload, payloadKey, validationError]);
-
-  useEffect(() => {
-    if (!context || !previewIsCurrent || !preview || creditEnabled || houseOffer) return;
-    const mode = autoPaymentMode;
-    if (!mode) return;
-    const current = parseSettlementNumber(paymentInputs[mode] ?? '');
-    const tolerance = 0.5 / 10 ** context.precision;
-    if (Math.abs(current - lastAutoPayment.current) >= tolerance) {
-      setAutoPaymentMode(null);
-      return;
-    }
-    if (Math.abs(current - preview.totals.grand_total) < tolerance) return;
-
-    lastAutoPayment.current = preview.totals.grand_total;
-    setPaymentInputs({
-      [mode]: preview.totals.grand_total.toFixed(context.precision),
-    });
-  }, [autoPaymentMode, context, creditEnabled, houseOffer, paymentInputs, preview, previewIsCurrent]);
+  }, [hasSettlementAttempt, isSettling, open, payload, payloadKey, payloadPricingKey, validationError]);
 
   const handleHouseOfferChange = (enabled: boolean) => {
     setHouseOffer(enabled);
@@ -312,29 +288,10 @@ export default function SettlementDialog({
       setInvoiceDiscount(null);
       setCreditEnabled(false);
       setPaymentInputs({});
-      setAutoPaymentMode(null);
     } else if (context) {
       setPreview(null);
       setPreviewKey('');
-      restoreAutomaticPayment(context, context.totals.grand_total);
     }
-  };
-
-  const restoreAutomaticPayment = (
-    currentContext: SettlementContext,
-    authoritativeTotal?: number
-  ) => {
-    const mode = currentContext.payment_modes.find((candidate) => candidate.default && candidate.type === 'Cash')
-      ?? currentContext.payment_modes.find((candidate) => candidate.type === 'Cash')
-      ?? currentContext.payment_modes.find((candidate) => candidate.default)
-      ?? currentContext.payment_modes[0];
-    if (!mode) return;
-    const total = authoritativeTotal
-      ?? (previewIsCurrent ? preview?.totals.grand_total : undefined)
-      ?? currentContext.totals.grand_total;
-    setAutoPaymentMode(mode.id);
-    lastAutoPayment.current = total;
-    setPaymentInputs(total > 0 ? { [mode.id]: total.toFixed(currentContext.precision) } : {});
   };
 
   const handleCreditChange = (enabled: boolean) => {
@@ -342,20 +299,15 @@ export default function SettlementDialog({
     setPreviewError(null);
     if (enabled) {
       setPaymentInputs({});
-      setAutoPaymentMode(null);
-    } else if (context) {
-      restoreAutomaticPayment(context);
     }
   };
 
   const handlePaymentFocus = (mode: string) => {
     if (!context || creditEnabled || paymentInputs[mode]) return;
-    const total = (previewIsCurrent ? preview?.totals.grand_total : undefined)
+    const pricingPreviewIsCurrent = preview && previewPricingKey === payloadPricingKey;
+    const total = (pricingPreviewIsCurrent ? preview.totals.grand_total : undefined)
       ?? context.totals.grand_total;
-    const otherPayments = Object.entries(paymentInputs)
-      .filter(([candidate]) => candidate !== mode)
-      .reduce((sum, [, value]) => sum + (parseSettlementNumber(value) || 0), 0);
-    const remaining = Math.max(0, total - otherPayments);
+    const remaining = calculateRemainingPayment(paymentInputs, mode, total);
     if (remaining > 0) {
       setPaymentInputs((current) => ({
         ...current,
@@ -370,7 +322,14 @@ export default function SettlementDialog({
   };
 
   const handleSettle = async () => {
-    if (!payload || !previewIsCurrent || validationError || isSettling) return;
+    const hasValidSettlementMethod = houseOffer || creditEnabled || payments.length > 0;
+    if (
+      !payload
+      || !previewIsCurrent
+      || validationError
+      || isSettling
+      || !hasValidSettlementMethod
+    ) return;
 
     setIsSettling(true);
     setHasSettlementAttempt(true);
@@ -436,6 +395,7 @@ export default function SettlementDialog({
       ? t('settlement.actions.credit')
       : t('settlement.actions.pay');
   const formLocked = isSettling || hasSettlementAttempt;
+  const hasValidSettlementMethod = houseOffer || creditEnabled || payments.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -529,7 +489,6 @@ export default function SettlementDialog({
                           value={paymentInputs[mode.id] ?? ''}
                           onFocus={() => handlePaymentFocus(mode.id)}
                           onChange={(event) => {
-                            setAutoPaymentMode(null);
                             setPaymentInputs((current) => ({
                               ...current,
                               [mode.id]: event.target.value,
@@ -599,7 +558,12 @@ export default function SettlementDialog({
                   type="button"
                   className="w-full"
                   onClick={handleSettle}
-                  disabled={isSettling || !previewIsCurrent || !!validationError}
+                  disabled={
+                    isSettling
+                    || !previewIsCurrent
+                    || !!validationError
+                    || !hasValidSettlementMethod
+                  }
                 >
                   {isSettling
                     ? t('settlement.actions.processing')

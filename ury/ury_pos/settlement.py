@@ -311,6 +311,38 @@ def allocate_payment_rows(payments, invoice_totals, allow_credit, precision=2):
     }
 
 
+def build_payment_plan(
+    payments,
+    invoice_totals,
+    allow_credit,
+    precision=2,
+    allow_incomplete_normal=False,
+):
+    """Build a payment plan, allowing an incomplete normal-payment preview."""
+    total_due = sum(
+        (_quantize(value, precision) for value in invoice_totals), Decimal(0)
+    )
+    tendered = sum(
+        (_quantize(row["amount"], precision) for row in payments),
+        Decimal(0),
+    )
+    if allow_incomplete_normal and not allow_credit and tendered < total_due:
+        preview_plan = allocate_payment_rows(
+            payments,
+            invoice_totals,
+            allow_credit=True,
+            precision=precision,
+        )
+        preview_plan["credit_amount"] = 0.0
+        return preview_plan
+    return allocate_payment_rows(
+        payments,
+        invoice_totals,
+        allow_credit=allow_credit,
+        precision=precision,
+    )
+
+
 def make_revision(invoices):
     """Return a deterministic hash of every mutable checkout input."""
     snapshot = []
@@ -1098,7 +1130,14 @@ def _max_discount_percentage(profile):
     return 100.0 if configured in (None, "") else flt(configured)
 
 
-def _prepare_documents(invoices, profile, payload, customer, for_update=False):
+def _prepare_documents(
+    invoices,
+    profile,
+    payload,
+    customer,
+    for_update=False,
+    allow_incomplete_normal_payment=False,
+):
     _validate_no_external_credits(invoices)
     precision = _precision(invoices[0])
     invoice_names = [invoice.name for invoice in invoices]
@@ -1322,11 +1361,12 @@ def _prepare_documents(invoices, profile, payload, customer, for_update=False):
         payments = normalise_payments(payload.get("payments"), modes, precision)
     if house_offer and payments:
         _fail(_("House Offer cannot contain payments."))
-    payment_plan = allocate_payment_rows(
+    payment_plan = build_payment_plan(
         payments,
         final_totals,
         allow_credit=credit_enabled,
         precision=precision,
+        allow_incomplete_normal=allow_incomplete_normal_payment,
     )
     if credit_enabled and payment_plan["credit_amount"] <= 0:
         _fail(_("Credit requires a balance greater than zero."))
@@ -1754,6 +1794,7 @@ def preview_settlement(payload):
         payload,
         customer,
         for_update=False,
+        allow_incomplete_normal_payment=True,
     )
     return _serialise_prepared(prepared, revision, invoice_name)
 

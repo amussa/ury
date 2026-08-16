@@ -4,7 +4,7 @@ import { usePOSStore } from '../store/pos-store';
 import { formatCurrency } from '@ury/core';
 import { Button, Input, Dialog, DialogContent, showToast } from '@ury/ui';
 import { call } from '@ury/core';
-import { DEFAULT_PAYMENT_MODE } from '../data/order-types';
+import { calculateRemainingPayment } from '../lib/settlement-state';
 import { t } from '../i18n';
 
 
@@ -62,13 +62,11 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
 
   // Calculate split payment total
   const payments = paymentModes
-    .map((mode: any) => {
-      const id = typeof mode === 'string' ? mode : mode.id;
+    .flatMap((id) => {
       const amount = parseFloat(paymentInputs[id] || '');
-      return amount > 0 ? { mode_of_payment: id, amount } : null;
-    })
-    .filter(Boolean);
-  const paymentsTotal = payments.reduce((sum, p: any) => sum + p.amount, 0);
+      return amount > 0 ? [{ mode_of_payment: id, amount }] : [];
+    });
+  const paymentsTotal = payments.reduce((sum, payment) => sum + payment.amount, 0);
 
   // baseTotal represents the amount before any invoice-level discount (like pricing rule or manual discount)
   const baseTotal = grandTotal + (discountAmount || 0);
@@ -98,33 +96,12 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
   const roundedFinalAdjustment = Math.round(finalAdjustment * 100) / 100;
   const showFinalAdjustment = Math.abs(roundedFinalAdjustment) > 0.001;
 
-  useEffect(()=>{
-    const defaultPaymentModePresent=paymentModes.find((mode)=>mode===DEFAULT_PAYMENT_MODE)
-    //only one payment mode should be present, then autofill the final amount, if not do not fill
-    const otherPaymentModesNotEntered=Object.keys(paymentInputs).length<=1;
-    if(finalTotal && paymentModes && DEFAULT_PAYMENT_MODE && defaultPaymentModePresent && otherPaymentModesNotEntered){
-      //check if default payment mode is present in paymentModes
-      setPaymentInputs((prev)=>({ 
-        ...prev,
-        [DEFAULT_PAYMENT_MODE]:String(finalTotal) 
-      }))
-    }
-  },[finalTotal,paymentModes])
-
-  // Helper to calculate remaining balance
-  const getRemainingBalance = (currentId: string) => {
-    const totalEntered = Object.entries(paymentInputs)
-      .filter(([id]) => id !== currentId)
-      .reduce((sum, [_, val]) => sum + (parseFloat(val) || 0), 0);
-    return Math.max(0, finalTotal - totalEntered);
-  };
-
   // Handler for input focus to auto-fill remaining balance
   const handlePaymentInputFocus = (id: string) => {
     setPaymentInputs(inputs => {
       // Only auto-fill if the field is empty or zero
       if (!inputs[id] || parseFloat(inputs[id]) === 0) {
-        const remaining = getRemainingBalance(id);
+        const remaining = calculateRemainingPayment(inputs, id, finalTotal);
         return { ...inputs, [id]: remaining > 0 ? String(remaining) : '' };
       }
       return inputs;
@@ -224,11 +201,10 @@ const PaymentDialog: React.FC<PaymentDialogProps> = ({
           <div className="space-y-4 mb-6">
             <h3 className="text-lg font-semibold">{t('payment.payment_methods')}</h3>
             <div className="grid grid-cols-1 gap-3">
-              {paymentModes.map((mode: any) => {
-                const id = typeof mode === 'string' ? mode : mode.id;
+              {paymentModes.map((id) => {
                 return (
                   <div key={id} className="flex items-center gap-3">
-                    <span className="w-24 font-medium">{typeof mode === 'string' ? mode : mode.name}</span>
+                    <span className="w-24 font-medium">{id}</span>
                     <Input
                       type="number"
                       min="0"

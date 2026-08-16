@@ -10,6 +10,7 @@ from ury.ury_pos.settlement import (
     _strict_boolean,
     allocate_payment_rows,
     allocate_proportionally,
+    build_payment_plan,
     make_revision,
     normalise_discounts,
     normalise_payments,
@@ -179,6 +180,39 @@ class TestSettlementPureRules(TestCase):
         self.assertEqual(plan["allocations"], [[]])
         self.assertEqual(plan["paid_now"], 0)
         self.assertEqual(plan["credit_amount"], 1000)
+
+    def test_preview_can_calculate_totals_before_a_payment_method_is_chosen(self):
+        plan = build_payment_plan(
+            [],
+            [600, 400],
+            allow_credit=False,
+            allow_incomplete_normal=True,
+        )
+
+        self.assertEqual(plan["allocations"], [[], []])
+        self.assertEqual(plan["tendered_amount"], 0)
+        self.assertEqual(plan["paid_now"], 0)
+        self.assertEqual(plan["credit_amount"], 0)
+
+    def test_preview_keeps_a_partial_normal_payment_without_creating_credit(self):
+        plan = build_payment_plan(
+            [{"mode_of_payment": "M-Pesa", "amount": 20, "type": "Phone"}],
+            [45],
+            allow_credit=False,
+            allow_incomplete_normal=True,
+        )
+
+        self.assertEqual(
+            plan["allocations"],
+            [[{"mode_of_payment": "M-Pesa", "amount": 20.0}]],
+        )
+        self.assertEqual(plan["tendered_amount"], 20)
+        self.assertEqual(plan["paid_now"], 20)
+        self.assertEqual(plan["credit_amount"], 0)
+
+    def test_settlement_still_rejects_an_empty_normal_payment(self):
+        with self.assertRaises(SettlementValidationError):
+            build_payment_plan([], [1000], allow_credit=False)
 
     def test_short_normal_payment_is_not_silently_converted_to_credit(self):
         with self.assertRaises(SettlementValidationError):
