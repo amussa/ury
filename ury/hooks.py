@@ -80,10 +80,11 @@ website_route_rules = [
 # ----------
 
 # add methods and filters to jinja environment
-# jinja = {
-# 	"methods": "ury.utils.jinja_methods",
-# 	"filters": "ury.utils.jinja_filters"
-# }
+jinja = {
+	"methods": [
+		"ury.ury.hooks.ury_pos_closing_entry.get_pos_closing_discount_sales_for_print",
+	],
+}
 
 # Installation
 # ------------
@@ -390,6 +391,7 @@ fixtures = [
                     "POS Closing Entry-custom_ury_discount_total",
                     "POS Closing Entry-custom_ury_house_offer_count",
                     "POS Closing Entry-custom_ury_house_offer_value",
+                    "POS Closing Entry-custom_ury_discount_sales",
                     "POS Closing Entry Detail-custom_closing_amount",
                     "POS Profile-custom_edit_order_type",
                     "Printer Settings-kot_print_format_",

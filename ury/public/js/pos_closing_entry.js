@@ -145,6 +145,10 @@ async function refresh_commercial_summary(frm) {
 	for (const row of summary.credit_sales || []) {
 		frm.add_child("custom_ury_credit_sales", row);
 	}
+	frm.clear_table("custom_ury_discount_sales");
+	for (const row of summary.discount_sales || []) {
+		frm.add_child("custom_ury_discount_sales", row);
+	}
 	for (const fieldname of [
 		"custom_ury_credit_sales_count",
 		"custom_ury_credit_total",
@@ -155,6 +159,7 @@ async function refresh_commercial_summary(frm) {
 		await frm.set_value(fieldname, summary[fieldname] || 0);
 	}
 	frm.refresh_field("custom_ury_credit_sales");
+	frm.refresh_field("custom_ury_discount_sales");
 }
 
 function apply_rounded_invoice_totals(frm, summary) {
@@ -195,6 +200,10 @@ function configure_whole_mzn_display(frm) {
 		"total_final",
 		"paid_now",
 		"credit_amount",
+	]);
+	set_grid_currency_precision(frm, "custom_ury_discount_sales", [
+		"normal_amount",
+		"charged_amount",
 	]);
 }
 

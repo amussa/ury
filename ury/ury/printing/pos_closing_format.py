@@ -57,6 +57,14 @@ HTML = r"""
   .credit-entry .credit-title { font-family: Arial, sans-serif; font-size: 9px; font-weight: 900; }
   .credit-entry table td:first-child { width: 45%; }
   .credit-entry table td:last-child { width: 55%; text-align: right; }
+  .discount-items { margin-top: .8mm; font-size: 8px; line-height: 1.18; }
+  .discount-items th { border-bottom: 1px solid #000; padding-top: .7mm; font-size: 7.4px; text-align: right; }
+  .discount-items th:first-child { width: 52%; text-align: left; }
+  .discount-items th:nth-child(2), .discount-items th:nth-child(3) { width: 24%; }
+  .discount-items td { border-bottom: 1px solid #000; text-align: right; overflow-wrap: anywhere; }
+  .discount-items td:first-child { text-align: left; }
+  .discount-items .sale-heading td { border-top: 2px solid #000; border-bottom: 0; padding-top: 1.2mm; font-family: Arial, sans-serif; font-size: 8.5px; font-weight: 900; text-align: left; }
+  .discount-items .sale-reason td { border-bottom: 0; padding-bottom: .5mm; font-size: 7.4px; text-align: left; }
   .note { margin-top: .8mm; font-size: 8.2px; line-height: 1.25; }
   .sign { margin-top: 5mm; }
   .sign-line { border-top: 1px solid #000; margin-top: 5mm; padding-top: .8mm; text-align: center; font-size: 9px; }
@@ -72,6 +80,7 @@ HTML = r"""
 {% set counted_total = doc.payment_reconciliation|sum(attribute="closing_amount") %}
 {% set difference_total = doc.payment_reconciliation|sum(attribute="difference") %}
 {% set credit_rows = doc.custom_ury_credit_sales or [] %}
+{% set discount_rows = doc.custom_ury_discount_sales or get_pos_closing_discount_sales_for_print(doc) %}
 {% set tax_total = doc.taxes|sum(attribute="amount") %}
 {% set rounding_total = (doc.grand_total or 0) - (doc.net_total or 0) - (tax_total or 0) %}
 {% set reconciliation = namespace(has_difference=false) %}
@@ -129,6 +138,31 @@ HTML = r"""
   <tr><td>Vendas a crédito</td><td>{{ doc.custom_ury_credit_sales_count or 0 }}</td></tr>
   <tr><td>Saldo a crédito</td><td>{{ frappe.utils.fmt_money(doc.custom_ury_credit_total or 0, precision=0, currency=None) }}</td></tr>
 </table>
+{% endif %}
+
+{% if discount_rows %}
+<div class="t-section">VENDAS COM DESCONTO/OFERTA</div>
+<table class="discount-items">
+  {% set sale = namespace(pos_invoice="") %}
+  {% for item in discount_rows %}
+    {% if sale.pos_invoice != item.pos_invoice %}
+      <tr class="sale-heading">
+        <td colspan="3">
+          {{ item.pos_invoice }} - {% if item.sale_type == "House Offer" %}OFERTA DA CASA{% else %}DESCONTO{% endif %}
+        </td>
+      </tr>
+      {% if item.reason %}<tr class="sale-reason"><td colspan="3">Motivo: {{ item.reason }}</td></tr>{% endif %}
+      <tr><th>Artigo</th><th>Normal</th><th>Cobrado</th></tr>
+      {% set sale.pos_invoice = item.pos_invoice %}
+    {% endif %}
+    <tr>
+      <td>{{ item.qty }} x {{ item.item_name }}</td>
+      <td>{{ frappe.utils.fmt_money(item.normal_amount or 0, precision=0, currency=None) }}</td>
+      <td>{{ frappe.utils.fmt_money(item.charged_amount or 0, precision=0, currency=None) }}</td>
+    </tr>
+  {% endfor %}
+</table>
+<div class="note">Normal e cobrado são totais da linha; a quantidade aparece junto ao artigo.</div>
 {% endif %}
 
 {% if credit_rows %}

@@ -32,6 +32,7 @@ def populate_commercial_summary(doc):
 		pos_opening_entry=doc.get("pos_opening_entry"),
 	)
 	doc.set("custom_ury_credit_sales", summary["credit_sales"])
+	doc.set("custom_ury_discount_sales", summary["discount_sales"])
 	for fieldname in (
 		"custom_ury_credit_sales_count",
 		"custom_ury_credit_total",
@@ -40,6 +41,22 @@ def populate_commercial_summary(doc):
 		"custom_ury_house_offer_value",
 	):
 		doc.set(fieldname, summary[fieldname])
+
+
+def get_pos_closing_discount_sales_for_print(doc):
+	"""Return persisted rows, or derive them for a pre-feature historical closing."""
+	persisted = doc.get("custom_ury_discount_sales") or []
+	if persisted:
+		return persisted
+	invoice_names = [
+		row.pos_invoice
+		for row in (doc.get("pos_transactions") or [])
+		if row.pos_invoice
+	]
+	return get_commercial_summary_data(
+		invoice_names,
+		pos_opening_entry=doc.get("pos_opening_entry"),
+	)["discount_sales"]
 
 
 @frappe.whitelist()
@@ -103,6 +120,7 @@ def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
 	invoice_names = list(dict.fromkeys(invoice_names or []))
 	empty = {
 		"credit_sales": [],
+		"discount_sales": [],
 		"custom_ury_credit_sales_count": 0,
 		"custom_ury_credit_total": 0,
 		"custom_ury_discount_total": 0,
@@ -115,7 +133,7 @@ def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
 	invoices = frappe.get_all(
 		"POS Invoice",
 		filters={"name": ["in", invoice_names]},
-		fields=["name", "custom_ury_settlement"],
+		fields=["name", "custom_ury_settlement", "grand_total", "rounded_total"],
 	)
 	if len(invoices) != len(invoice_names):
 		frappe.throw(_("Unable to load every POS Invoice in the closing summary."))
@@ -130,9 +148,11 @@ def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
 		filters={"name": ["in", settlement_names], "docstatus": 1},
 		fields=[
 			"name",
+			"creation",
 			"pos_opening_entry",
 			"customer",
 			"settlement_type",
+			"reason",
 			"total_before_manual_discount",
 			"manual_discount_total",
 			"grand_total",
@@ -140,6 +160,7 @@ def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
 			"credit_amount",
 			"due_date",
 		],
+		order_by="creation, name",
 	)
 	if len(settlements) != len(settlement_names):
 		frappe.throw(_("A POS Invoice references a missing or unsubmitted URY settlement."))
@@ -159,6 +180,25 @@ def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
 		fields=["parent", "pos_invoice", "idx"],
 		order_by="parent, idx",
 	)
+	invoice_items = frappe.get_all(
+		"POS Invoice Item",
+		filters={
+			"parent": ["in", invoice_names],
+			"parenttype": "POS Invoice",
+		},
+		fields=[
+			"parent",
+			"idx",
+			"item_code",
+			"item_name",
+			"qty",
+			"price_list_rate",
+			"custom_ury_rate_before_manual_discount",
+			"rate",
+			"amount",
+		],
+		order_by="parent, idx",
+	)
 	sales_invoices = frappe.get_all(
 		"Sales Invoice",
 		filters={
@@ -172,10 +212,20 @@ def get_commercial_summary_data(invoice_names, *, pos_opening_entry=None):
 		settlements,
 		allocations,
 		sales_invoices,
+		pos_invoices=invoices,
+		invoice_items=invoice_items,
 	)
 
 
-def build_commercial_summary(invoice_names, settlements, allocations, sales_invoices=None):
+def build_commercial_summary(
+	invoice_names,
+	settlements,
+	allocations,
+	sales_invoices=None,
+	*,
+	pos_invoices=None,
+	invoice_items=None,
+):
 	"""Build totals once per settlement, never once per POS Invoice."""
 	invoice_names = set(invoice_names)
 	allocation_map = {}
@@ -194,6 +244,7 @@ def build_commercial_summary(invoice_names, settlements, allocations, sales_invo
 	discount_total = 0.0
 	house_offer_count = 0
 	house_offer_value = 0.0
+	discount_sales = []
 
 	for settlement in settlements:
 		allocated_invoices = allocation_map.get(settlement.name, [])
@@ -207,6 +258,19 @@ def build_commercial_summary(invoice_names, settlements, allocations, sales_invo
 			house_offer_value += flt(settlement.total_before_manual_discount)
 		else:
 			discount_total += flt(settlement.manual_discount_total)
+
+		if (
+			settlement.settlement_type == "House Offer"
+			or flt(settlement.manual_discount_total) >= TOLERANCE
+		) and pos_invoices is not None and invoice_items is not None:
+			discount_sales.extend(
+				build_discount_sale_rows(
+					settlement,
+					allocated_invoices,
+					pos_invoices,
+					invoice_items,
+				)
+			)
 
 		if flt(settlement.credit_amount) < TOLERANCE:
 			continue
@@ -226,12 +290,82 @@ def build_commercial_summary(invoice_names, settlements, allocations, sales_invo
 
 	return {
 		"credit_sales": credit_sales,
+		"discount_sales": discount_sales,
 		"custom_ury_credit_sales_count": len(credit_sales),
 		"custom_ury_credit_total": flt(credit_total, 2),
 		"custom_ury_discount_total": flt(discount_total, 2),
 		"custom_ury_house_offer_count": house_offer_count,
 		"custom_ury_house_offer_value": flt(house_offer_value, 2),
 	}
+
+
+def build_discount_sale_rows(settlement, allocated_invoices, pos_invoices, invoice_items):
+	"""Return one authoritative print row per item in a discounted sale.
+
+	``normal_amount`` is based on the normal/list rate. ``charged_amount`` is
+	the invoice's final settled total allocated across its item lines. This
+	includes item discounts, invoice discounts, House Offer and final rounding.
+	"""
+	invoice_map = {row.name: row for row in pos_invoices}
+	items_by_invoice = {}
+	for row in invoice_items:
+		items_by_invoice.setdefault(row.parent, []).append(row)
+
+	result = []
+	for invoice_name in allocated_invoices:
+		invoice = invoice_map.get(invoice_name)
+		items = items_by_invoice.get(invoice_name, [])
+		if not invoice or not items:
+			frappe.throw(
+				_("Unable to load items for discounted POS Invoice {0}.").format(
+					frappe.bold(invoice_name)
+				)
+			)
+
+		charged_amounts = _allocate_charged_amounts(
+			_settled_invoice_total(invoice),
+			items,
+		)
+		for item, charged_amount in zip(items, charged_amounts, strict=True):
+			normal_rate = (
+				flt(item.get("price_list_rate"))
+				or flt(item.get("custom_ury_rate_before_manual_discount"))
+				or flt(item.get("rate"))
+			)
+			result.append(
+				{
+					"settlement": settlement.name,
+					"pos_invoice": invoice_name,
+					"sale_type": (
+						"House Offer"
+						if settlement.settlement_type == "House Offer"
+						else "Discount"
+					),
+					"reason": settlement.get("reason"),
+					"item_code": item.item_code,
+					"item_name": item.item_name or item.item_code,
+					"qty": flt(item.qty),
+					"normal_amount": flt(normal_rate * flt(item.qty), 2),
+					"charged_amount": charged_amount,
+				}
+			)
+	return result
+
+
+def _allocate_charged_amounts(final_total, items):
+	"""Allocate the rounded invoice total to items without losing the residual."""
+	final_total = flt(final_total, 2)
+	if abs(final_total) < TOLERANCE:
+		return [0.0 for _item in items]
+
+	bases = [flt(item.get("amount")) for item in items]
+	base_total = flt(sum(bases), 6)
+	if abs(base_total) < TOLERANCE:
+		frappe.throw(_("Unable to allocate the charged value across invoice items."))
+
+	allocated = [flt(final_total * base / base_total, 2) for base in bases]
+	allocated[-1] = flt(allocated[-1] + final_total - sum(allocated), 2)
+	return allocated
 
 
 def _validate_summary_access(invoice_names, pos_opening_entry):

@@ -1,0 +1,109 @@
+{
+ "actions": [],
+ "creation": "2026-08-17 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "settlement",
+  "pos_invoice",
+  "sale_type",
+  "reason",
+  "item_code",
+  "item_name",
+  "qty",
+  "normal_amount",
+  "charged_amount"
+ ],
+ "fields": [
+  {
+   "fieldname": "settlement",
+   "fieldtype": "Link",
+   "label": "Settlement",
+   "options": "URY POS Settlement",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "pos_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "POS Invoice",
+   "options": "POS Invoice",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "sale_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Discount\nHouse Offer",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 3,
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Quantity",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "normal_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Normal Price",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "charged_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Charged Price",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "URY",
+ "name": "URY POS Closing Discount Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

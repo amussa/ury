@@ -119,6 +119,112 @@ class TestURYPosClosingEntryHooks(TestCase):
 		self.assertEqual(summary["custom_ury_house_offer_count"], 1)
 		self.assertEqual(summary["custom_ury_house_offer_value"], 50)
 		self.assertEqual(summary["credit_sales"][0]["pos_invoices"], "PI-1, PI-2")
+		self.assertEqual(summary["discount_sales"], [])
+
+	def test_discount_sale_rows_include_every_item_and_final_rounding(self):
+		settlements = [
+			frappe._dict(
+				name="SET-1",
+				customer="Customer A",
+				settlement_type="Paid",
+				reason="Autorizado pela gerência",
+				total_before_manual_discount=1200,
+				manual_discount_total=196,
+				grand_total=1004,
+				paid_now=1004,
+				credit_amount=0,
+			),
+			frappe._dict(
+				name="SET-2",
+				customer="Customer B",
+				settlement_type="House Offer",
+				reason="Oferta autorizada",
+				total_before_manual_discount=100,
+				manual_discount_total=100,
+				grand_total=0,
+				paid_now=0,
+				credit_amount=0,
+			),
+		]
+		allocations = [
+			frappe._dict(parent="SET-1", pos_invoice="PI-1"),
+			frappe._dict(parent="SET-2", pos_invoice="PI-2"),
+		]
+		pos_invoices = [
+			frappe._dict(name="PI-1", grand_total=1003.5, rounded_total=1004),
+			frappe._dict(name="PI-2", grand_total=0, rounded_total=0),
+		]
+		invoice_items = [
+			frappe._dict(
+				parent="PI-1",
+				item_code="CREPE",
+				item_name="Crepes",
+				qty=1,
+				price_list_rate=350,
+				rate=350,
+				amount=350,
+			),
+			frappe._dict(
+				parent="PI-1",
+				item_code="ARROZ",
+				item_name="Arroz de mariscos",
+				qty=1,
+				price_list_rate=850,
+				rate=765,
+				amount=765,
+			),
+			frappe._dict(
+				parent="PI-2",
+				item_code="AGUA",
+				item_name="Água 500ml",
+				qty=2,
+				price_list_rate=50,
+				rate=50,
+				amount=100,
+			),
+		]
+
+		summary = ury_pos_closing_entry.build_commercial_summary(
+			["PI-1", "PI-2"],
+			settlements,
+			allocations,
+			pos_invoices=pos_invoices,
+			invoice_items=invoice_items,
+		)
+
+		rows = summary["discount_sales"]
+		self.assertEqual(len(rows), 3)
+		self.assertEqual([row["item_name"] for row in rows], ["Crepes", "Arroz de mariscos", "Água 500ml"])
+		self.assertEqual([row["normal_amount"] for row in rows], [350, 850, 100])
+		self.assertEqual(sum(row["charged_amount"] for row in rows[:2]), 1004)
+		self.assertEqual(rows[2]["charged_amount"], 0)
+		self.assertEqual(rows[2]["sale_type"], "House Offer")
+		self.assertEqual(rows[0]["reason"], "Autorizado pela gerência")
+
+	@patch("ury.ury.hooks.ury_pos_closing_entry.get_commercial_summary_data")
+	def test_print_fallback_derives_rows_for_historical_closing(self, get_summary):
+		get_summary.return_value = {"discount_sales": [{"pos_invoice": "PI-1"}]}
+		doc = frappe._dict(
+			custom_ury_discount_sales=[],
+			pos_opening_entry="OPEN-1",
+			pos_transactions=[frappe._dict(pos_invoice="PI-1")],
+		)
+
+		rows = ury_pos_closing_entry.get_pos_closing_discount_sales_for_print(doc)
+
+		self.assertEqual(rows, [{"pos_invoice": "PI-1"}])
+		get_summary.assert_called_once_with(["PI-1"], pos_opening_entry="OPEN-1")
+
+	@patch("ury.ury.hooks.ury_pos_closing_entry.get_commercial_summary_data")
+	def test_print_fallback_prefers_persisted_rows(self, get_summary):
+		persisted = [frappe._dict(pos_invoice="PI-2")]
+		doc = frappe._dict(custom_ury_discount_sales=persisted)
+
+		self.assertIs(
+			ury_pos_closing_entry.get_pos_closing_discount_sales_for_print(doc),
+			persisted,
+		)
+		get_summary.assert_not_called()
 
 	@patch("ury.ury.hooks.ury_pos_closing_entry.frappe.get_all")
 	def test_closing_uses_the_final_rounded_invoice_totals(self, get_all):

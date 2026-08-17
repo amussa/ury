@@ -748,6 +748,16 @@ def get_custom_fields():
 				"allow_on_submit": 1,
 				"module": "URY",
 			},
+			{
+				"fieldname": "custom_ury_discount_sales",
+				"fieldtype": "Table",
+				"label": "Vendas com desconto ou oferta",
+				"options": "URY POS Closing Discount Item",
+				"insert_after": "custom_ury_house_offer_value",
+				"read_only": 1,
+				"allow_on_submit": 1,
+				"module": "URY",
+			},
 		],
      
     }
