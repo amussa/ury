@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Gelatiamo POS closing failures every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+Unit=gelatiamo-closing-error-alerts.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Gelatiamo POS closing failure email alerts
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/gelatiamo-erpnext/ops/closing-error-alerts/run.sh
+TimeoutStartSec=50
