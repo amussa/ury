@@ -125,6 +125,10 @@ has_permission = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
+override_doctype_class = {
+    "Sales Invoice": "ury.ury_pos.consolidation_rounding.URYSalesInvoice",
+}
+
 # Document Events
 # ---------------
 # Hook on document methods and events
