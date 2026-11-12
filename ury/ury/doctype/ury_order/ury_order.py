@@ -15,7 +15,11 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
-from ury.ury.api.ury_kot_generate import kot_execute, process_items_for_cancel_kot
+from ury.ury.api.ury_kot_generate import (
+    get_cancelled_order_items,
+    kot_execute,
+    process_items_for_cancel_kot,
+)
 from ury.ury_pos.api import (
     _get_stock_details,
     get_draft_reserved_qty_map,
@@ -74,6 +78,19 @@ def _authorise_order_manual_discounts(invoice, enabled):
     previous = getattr(frappe.flags, fieldname, None)
     if enabled:
         setattr(frappe.flags, fieldname, invoice)
+    try:
+        yield
+    finally:
+        setattr(frappe.flags, fieldname, previous)
+
+
+@contextmanager
+def _authorise_printed_item_reduction(invoice, enabled):
+    """Limit the printed-item exception to this controlled order save."""
+    fieldname = "ury_printed_item_reduction_invoice"
+    previous = getattr(frappe.flags, fieldname, None)
+    if enabled:
+        setattr(frappe.flags, fieldname, invoice.name)
     try:
         yield
     finally:
@@ -1687,7 +1704,8 @@ def sync_order(
     order_type=None,
     aggregator_id=None,
     room=None,
-    merged_tables=None
+    merged_tables=None,
+    cancellation_reason=None,
 ):
     """Public POS compatibility wrapper around the shared order save service."""
     return _sync_order(
@@ -1708,6 +1726,7 @@ def sync_order(
         aggregator_id=aggregator_id,
         room=room,
         merged_tables=merged_tables,
+        cancellation_reason=cancellation_reason,
     )
 
 
@@ -1736,6 +1755,7 @@ def _sync_order(
     expected_menu=None,
     expected_price_list=None,
     expected_item_prices=None,
+    cancellation_reason=None,
 ):
     """Save an order while preserving the public POS behaviour by default.
 
@@ -1952,6 +1972,19 @@ def _sync_order(
     # - 'ury_pos': Already formatted list, hence using else
     if isinstance(items, str):
         items = json.loads(items)
+    cancelled_order_items = get_cancelled_order_items(items, past_item)
+    printed_item_reduction = bool(
+        cint(invoice.invoice_printed) and cancelled_order_items
+    )
+    cancellation_reason = (cancellation_reason or "").strip()
+    if printed_item_reduction and not cancellation_reason:
+        frappe.throw(
+            _(
+                "Indique o motivo da redu\u00e7\u00e3o. A conta j\u00e1 foi impressa e ser\u00e1 "
+                "emitido um KOT de cancelamento."
+            ),
+            title=_("Motivo obrigat\u00f3rio"),
+        )
     existing_item_snapshot = (
         _snapshot_existing_order_items(invoice)
         if append_only and not invoice.is_new()
@@ -2181,7 +2214,7 @@ def _sync_order(
         setattr(frappe.flags, waiter_price_list_flag, expected_price_list)
     with _temporary_order_actor(opening.user if append_only else None), _authorise_order_manual_discounts(
         invoice, has_order_manual_discounts
-    ):
+    ), _authorise_printed_item_reduction(invoice, printed_item_reduction):
         try:
             if append_only:
                 invoice.save(ignore_permissions=True)
@@ -2237,9 +2270,50 @@ def _sync_order(
 
     if not skip_kot:
         try:
-            kot_execute(invoice.name, customer, table, items, past_item, comments)
+            kot_result = kot_execute(
+                invoice.name,
+                customer,
+                table,
+                items,
+                past_item,
+                comments,
+                cancellation_reason=cancellation_reason or None,
+            )
+
+            if printed_item_reduction:
+                unrouted_items = kot_result.get("unrouted_items") or []
+                if unrouted_items:
+                    frappe.throw(
+                        _(
+                            "N\u00e3o existe rota de produ\u00e7\u00e3o para cancelar: {0}. "
+                            "A ordem n\u00e3o foi alterada."
+                        ).format(", ".join(unrouted_items))
+                    )
+                if not kot_result.get("cancelled_kots"):
+                    frappe.throw(
+                        _(
+                            "N\u00e3o foi poss\u00edvel criar o KOT de cancelamento. "
+                            "A ordem n\u00e3o foi alterada."
+                        )
+                    )
+
+                cancelled_summary = ", ".join(
+                    "{0}: -{1:g}".format(
+                        item.get("item_name") or item.get("item_code"),
+                        abs(flt(item.get("qty"))),
+                    )
+                    for item in cancelled_order_items
+                )
+                invoice.add_comment(
+                    "Info",
+                    _(
+                        "Artigos reduzidos ap\u00f3s impress\u00e3o: {0}. Motivo: {1}"
+                    ).format(cancelled_summary, cancellation_reason),
+                )
 
         except Exception as e:
+            if printed_item_reduction:
+                raise
             # Keep the existing desktop POS behaviour. The waiter API uses the
             # private skip path and handles KOT failures transactionally.
             error_msg = f"KOT Creation Failes {str(e)}"

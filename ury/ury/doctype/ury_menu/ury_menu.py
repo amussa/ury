@@ -10,11 +10,19 @@ from ury.ury_pos.price_options import lock_menu_price_options_parent
 
 
 class URYMenu(Document):
+    def onload(self):
+        from ury.ury_pos.promotion_balance import load_balances
+
+        load_balances(self)
+
     def validate(self):
         for d in self.items:
             if not d.rate:
                 d.rate = frappe.db.get_value("Item", d.item, "standard_rate")
         self.validate_price_options()
+        from ury.ury_pos.promotion_balance import apply_balance_requests
+
+        apply_balance_requests(self)
 
     def validate_price_options(self):
         self._protect_price_options_used_by_open_orders()

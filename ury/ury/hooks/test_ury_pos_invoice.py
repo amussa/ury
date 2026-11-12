@@ -9,6 +9,71 @@ from ury.ury.hooks import ury_pos_invoice
 
 
 class TestURYPosInvoiceHooks(TestCase):
+    @patch("ury.ury.hooks.ury_pos_invoice.frappe.throw")
+    @patch("ury.ury.hooks.ury_pos_invoice.frappe.get_doc")
+    @patch("ury.ury.hooks.ury_pos_invoice.frappe.db.get_value", return_value=0)
+    def test_printed_item_reduction_is_blocked_outside_controlled_order_save(
+        self, _get_value, get_doc, throw
+    ):
+        throw.side_effect = RuntimeError
+        get_doc.return_value = frappe._dict(
+            items=[
+                frappe._dict(
+                    item_code="BOLO-005", item_name="Mil folhas", qty=3
+                )
+            ]
+        )
+        invoice = frappe._dict(
+            name="POL-1",
+            waiter="cashier@example.com",
+            modified_by="cashier@example.com",
+            pos_profile="POS Polana",
+            invoice_printed=1,
+            items=[
+                frappe._dict(
+                    item_code="BOLO-005", item_name="Mil folhas", qty=1
+                )
+            ],
+        )
+
+        with self.assertRaises(RuntimeError):
+            ury_pos_invoice.validate_invoice(invoice, "validate")
+
+        self.assertIn("Cannot modify items", throw.call_args.args[0])
+
+    @patch("ury.ury.hooks.ury_pos_invoice.frappe.get_doc")
+    @patch("ury.ury.hooks.ury_pos_invoice.frappe.db.get_value", return_value=0)
+    def test_printed_item_reduction_is_allowed_for_exact_controlled_invoice(
+        self, _get_value, get_doc
+    ):
+        get_doc.return_value = frappe._dict(
+            items=[
+                frappe._dict(
+                    item_code="BOLO-005", item_name="Mil folhas", qty=3
+                )
+            ]
+        )
+        invoice = frappe._dict(
+            name="POL-1",
+            waiter="cashier@example.com",
+            modified_by="cashier@example.com",
+            pos_profile="POS Polana",
+            invoice_printed=1,
+            items=[
+                frappe._dict(
+                    item_code="BOLO-005", item_name="Mil folhas", qty=1
+                )
+            ],
+        )
+        previous = getattr(
+            frappe.flags, "ury_printed_item_reduction_invoice", None
+        )
+        frappe.flags.ury_printed_item_reduction_invoice = "POL-1"
+        try:
+            ury_pos_invoice.validate_invoice(invoice, "validate")
+        finally:
+            frappe.flags.ury_printed_item_reduction_invoice = previous
+
     @patch(
         "ury.ury.hooks.ury_pos_invoice.now_datetime",
         return_value=datetime(2026, 8, 15, 18, 30, 0),

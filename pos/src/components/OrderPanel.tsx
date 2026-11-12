@@ -7,6 +7,7 @@ import { CustomerSelect } from './CustomerSelect';
 import ProductDialog from './ProductDialog';
 import OrderTypeSelect from './OrderTypeSelect';
 import CommentDialog from './CommentDialog';
+import ItemCancellationDialog from './ItemCancellationDialog';
 import { Button } from '@ury/ui';
 import { Spinner } from '@ury/ui';
 import { syncOrder } from '../lib/order-api';
@@ -16,6 +17,10 @@ import { showToast } from '@ury/ui';
 import { DINE_IN } from '../data/order-types';
 import { t } from '../i18n';
 import { showCartMutationError } from '../lib/cart-feedback';
+import {
+  findOrderItemReductions,
+  type OrderItemReduction,
+} from '../lib/order-reduction';
 
 const getServerErrorMessage = (error: unknown): string | null => {
   if (!error || typeof error !== 'object' || !('_server_messages' in error)) return null;
@@ -53,6 +58,7 @@ const OrderPanel = () => {
     orderId,
     orderComment,
     setOrderComment,
+    tableOrder,
     stockByItem,
     getItemQuantityByCode,
   } = usePOSStore();
@@ -60,6 +66,8 @@ const OrderPanel = () => {
   const [editingItem, setEditingItem] = useState<typeof activeOrders[0] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCommentDialog, setShowCommentDialog] = useState(false);
+  const [showCancellationDialog, setShowCancellationDialog] = useState(false);
+  const [pendingReductions, setPendingReductions] = useState<OrderItemReduction[]>([]);
   const quantityMutationKeys = useRef(new Set<string>());
   const [adjustingItemKeys, setAdjustingItemKeys] = useState(new Set<string>());
 
@@ -161,7 +169,7 @@ const OrderPanel = () => {
     setOrderComment(comment);
   };
 
-  const handleSubmit = async () => {
+  const submitOrder = async (cancellationReason?: string): Promise<boolean> => {
     try {
       if (!posProfile) {
         throw new Error(t('errors.pos_profile_not_found'));
@@ -213,7 +221,9 @@ const OrderPanel = () => {
         last_invoice: isUpdatingOrder ? orderId : null,
         invoice: isUpdatingOrder ? orderId : null,
         waiter: user.name,
-        comments: orderComment || undefined
+        comments: orderComment || undefined,
+        last_modified_time: isUpdatingOrder ? tableOrder?.message?.modified : undefined,
+        cancellation_reason: cancellationReason,
       };
 
       await syncOrder(orderData);
@@ -221,6 +231,7 @@ const OrderPanel = () => {
       // Reset all states after successful order submission
       resetOrderState();
       showToast.success(isUpdatingOrder ? t('success.order_updated') : t('success.order_created'));
+      return true;
     } catch (error) {
       console.error('Failed to sync order:', error);
       const serverMessage = getServerErrorMessage(error);
@@ -231,8 +242,36 @@ const OrderPanel = () => {
       } else {
         showToast.error(t('errors.failed_process_order'));
       }
+      return false;
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    const reductions = isUpdatingOrder && tableOrder?.message?.invoice_printed === 1
+      ? findOrderItemReductions(tableOrder.message.items || [], activeOrders.map(item => ({
+          item: item.item,
+          item_name: item.item_name || item.name,
+          quantity: item.quantity,
+          comment: item.comment,
+        })))
+      : [];
+
+    if (reductions.length > 0) {
+      setPendingReductions(reductions);
+      setShowCancellationDialog(true);
+      return;
+    }
+
+    await submitOrder();
+  };
+
+  const handleCancellationConfirm = async (reason: string) => {
+    const saved = await submitOrder(reason);
+    if (saved) {
+      setShowCancellationDialog(false);
+      setPendingReductions([]);
     }
   };
 
@@ -540,6 +579,15 @@ const OrderPanel = () => {
         onClose={() => setShowCommentDialog(false)}
         onSave={handleCommentSave}
         initialComment={orderComment}
+      />
+      <ItemCancellationDialog
+        isOpen={showCancellationDialog}
+        isSubmitting={isSubmitting}
+        reductions={pendingReductions}
+        onClose={() => {
+          if (!isSubmitting) setShowCancellationDialog(false);
+        }}
+        onConfirm={handleCancellationConfirm}
       />
     </div>
   );

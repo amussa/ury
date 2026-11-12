@@ -228,7 +228,7 @@ def process_items_for_cancel_kot(
     kot_type,
     invoiceItems,
 ):
-
+    result = {"created_kots": [], "unrouted_items": []}
     kot_items = create_order_items(items)
     invoiceItems = create_order_items(invoiceItems)
     pos_profile = frappe.get_doc("POS Profile", pos_profile_id)
@@ -249,6 +249,11 @@ def process_items_for_cancel_kot(
         )
         frappe.throw(f"More than one production route is configured for: {details}")
 
+    for item in kot_items:
+        item_code = item["item_code"]
+        if item_code not in route_state["routes"]:
+            result["unrouted_items"].append(item_code)
+
     for production in productions:
         production_items = [
             item
@@ -257,7 +262,7 @@ def process_items_for_cancel_kot(
         ]
 
         if production_items:
-            create_cancel_kot_doc(
+            kot_name = create_cancel_kot_doc(
                 invoice_id,
                 restaurant_table,
                 production_items,
@@ -270,6 +275,12 @@ def process_items_for_cancel_kot(
                 production.name,
                 menu=menu,
             )
+            result["created_kots"].append(
+                {"name": kot_name, "production": production.name}
+            )
+
+    result["unrouted_items"] = list(dict.fromkeys(result["unrouted_items"]))
+    return result
 
 
 # Create a cancel KOT document
@@ -369,6 +380,7 @@ def create_cancel_kot_doc(
 
     kot_cancel_doc.insert()
     kot_cancel_doc.submit()
+    return kot_cancel_doc.name
 
 
 # Whitelisted function to handle KOT entry
@@ -380,6 +392,7 @@ def kot_execute(
     current_items=[],
     previous_items=[],
     comments=None,
+    cancellation_reason=None,
 ):
     """Public legacy KOT endpoint; it never bypasses DocType permissions."""
     return _kot_execute(
@@ -389,6 +402,7 @@ def kot_execute(
         current_items,
         previous_items,
         comments,
+        cancellation_reason=cancellation_reason,
     )
 
 
@@ -401,6 +415,7 @@ def _kot_execute(
     comments=None,
     *,
     ignore_permissions=False,
+    cancellation_reason=None,
 ):
     """Internal KOT service with a server-only permission control."""
     result = {"created_kots": [], "unrouted_items": []}
@@ -410,8 +425,6 @@ def _kot_execute(
     new_Order_items_array = create_order_items(current_items)
 
     final_array = compare_two_array(new_Order_items_array, new_invoice_items_array)
-    removed_item = get_removed_items(new_invoice_items_array, new_Order_items_array)
-
     pos_invoice = frappe.get_doc("POS Invoice", invoice_id)
     pos_profile_id = pos_invoice.pos_profile
     pos_profile = frappe.get_doc("POS Profile", pos_profile_id)
@@ -425,8 +438,9 @@ def _kot_execute(
         )
 
     positive_qty_items = [item for item in final_array if flt(item["qty"]) > 0]
-    negative_qty_items = [item for item in final_array if flt(item["qty"]) < 0]
-    total_cancel_items = negative_qty_items + removed_item
+    total_cancel_items = get_cancelled_order_items(
+        new_Order_items_array, new_invoice_items_array
+    )
     if positive_qty_items:
         positive_result = process_items_for_kot(
             invoice_id,
@@ -442,19 +456,31 @@ def _kot_execute(
         result["created_kots"].extend(positive_result["created_kots"])
         result["unrouted_items"].extend(positive_result["unrouted_items"])
     if total_cancel_items:
-        process_items_for_cancel_kot(
+        cancel_result = process_items_for_cancel_kot(
             invoice_id,
             customer,
             restaurant_table,
             total_cancel_items,
-            comments,
+            cancellation_reason or comments,
             pos_profile_id,
             cancel_kot_naming_series,
             "Partially cancelled",
             new_invoice_items_array,
         )
+        result["created_kots"].extend(cancel_result["created_kots"])
+        result["unrouted_items"].extend(cancel_result["unrouted_items"])
+        result["cancelled_kots"] = cancel_result["created_kots"]
     result["unrouted_items"] = list(dict.fromkeys(result["unrouted_items"]))
     return result
+
+
+def get_cancelled_order_items(current_items, previous_items):
+    """Return the authoritative kitchen deltas that cancel prepared items."""
+    current = create_order_items(current_items)
+    previous = create_order_items(previous_items)
+    changed = compare_two_array(current, previous)
+    negative_qty_items = [item for item in changed if flt(item["qty"]) < 0]
+    return negative_qty_items + get_removed_items(previous, current)
 
 
 # Compare two arrays and return the items that are different

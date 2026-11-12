@@ -64,3 +64,13 @@ Total Closing Amount,Total contado
 "Required whenever at least one payment mode has a shortage or excess.","Obrigatório quando pelo menos um modo de pagamento apresenta falta ou excesso."
 "Explain the reason for the shortage or excess.","Explique o motivo da falta ou do excesso."
 "Price option label is invalid for: {0}. Reload the menu.","A designação da opção de preço é inválida para: {0}. Atualize o menu."
+Remaining Promotional Quantity,Quantidade restante em promoção
+Set Promotional Quantity,Definir quantidade em promoção
+Internal Promotional Allocation,Controlo interno da promoção
+"Units currently available at the promotional price. Open orders reserve this balance; cancelled orders release it.","Unidades actualmente disponíveis ao preço promocional. As ordens abertas reservam este saldo; o cancelamento liberta a reserva."
+"Enter the number of currently available units to put on promotion. No historical sales calculation is needed.","Indique quantas unidades do stock disponível pretende colocar em promoção. Não precisa de calcular vendas anteriores."
+Enter a valid promotional quantity.,Introduza uma quantidade promocional válida.
+Promotional quantity cannot exceed available stock ({0}).,A quantidade em promoção não pode exceder o stock disponível ({0}).
+The menu must have exactly one POS warehouse to set promotional quantities.,O menu deve ter exactamente um armazém POS para definir as quantidades em promoção.
+Reload the menu before changing promotional quantities.,Actualize o menu antes de alterar as quantidades em promoção.
+Promotion or stock changed while editing. Reload the menu and try again.,A promoção ou o stock mudou durante a edição. Actualize o menu e tente novamente.

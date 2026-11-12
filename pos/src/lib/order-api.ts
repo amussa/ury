@@ -46,6 +46,7 @@ export interface POSInvoice {
   waiter?: string;
   invoice_printed?: number;
   docstatus?: number;
+  modified?: string;
 }
 
 export interface TableOrder {
@@ -98,6 +99,8 @@ export interface SyncOrderRequest {
   last_invoice: string | null;
   comments?: string | null;
   room?: string;
+  last_modified_time?: string;
+  cancellation_reason?: string;
 }
 
 export const syncOrder = async (data: SyncOrderRequest) => {

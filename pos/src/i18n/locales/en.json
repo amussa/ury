@@ -129,6 +129,17 @@
     "placeholder": "Enter any special instructions or comments...",
     "save_button": "Save Comment"
   },
+  "item_cancellation": {
+    "title": "Confirm item reduction",
+    "description": "The bill has already been printed. Saving will issue a cancellation KOT to production.",
+    "items_heading": "Items to cancel",
+    "item_change": "{{item}}: {{previous}} → {{current}} (cancel {{cancelled}})",
+    "reason_label": "Cancellation reason",
+    "reason_placeholder": "Example: customer reduced the quantity after receiving the bill",
+    "reason_required": "Enter the cancellation reason.",
+    "confirm": "Save and issue KOT",
+    "saving": "Saving..."
+  },
   "errors": {
     "pos_profile_not_found": "POS Profile not found",
     "pos_profile_not_loaded": "POS profile not loaded yet",

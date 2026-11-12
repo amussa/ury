@@ -129,6 +129,17 @@
     "placeholder": "Entrez des instructions spéciales ou des commentaires...",
     "save_button": "Enregistrer le commentaire"
   },
+  "item_cancellation": {
+    "title": "Confirmer la réduction des articles",
+    "description": "L'addition a déjà été imprimée. L'enregistrement émettra un KOT d'annulation pour la production.",
+    "items_heading": "Articles à annuler",
+    "item_change": "{{item}} : {{previous}} → {{current}} (annuler {{cancelled}})",
+    "reason_label": "Motif de l'annulation",
+    "reason_placeholder": "Exemple : le client a réduit la quantité après avoir reçu l'addition",
+    "reason_required": "Indiquez le motif de l'annulation.",
+    "confirm": "Enregistrer et émettre le KOT",
+    "saving": "Enregistrement..."
+  },
   "errors": {
     "pos_profile_not_found": "Profil PDV introuvable",
     "pos_profile_not_loaded": "Le profil PDV n'est pas encore chargé",

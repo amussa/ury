@@ -11,6 +11,8 @@
   "enabled",
   "label",
   "rate",
+  "remaining_qty",
+  "set_remaining_qty",
   "allocated_qty"
  ],
  "fields": [
@@ -59,10 +61,27 @@
   },
   {
    "columns": 2,
+   "fieldname": "remaining_qty",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "in_list_view": 1,
+   "label": "Remaining Promotional Quantity",
+   "description": "Units currently available at the promotional price. Open orders reserve this balance; cancelled orders release it.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "set_remaining_qty",
+   "fieldtype": "Button",
+   "label": "Set Promotional Quantity"
+  },
+  {
+   "columns": 2,
    "fieldname": "allocated_qty",
    "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Promotional Quantity",
+   "hidden": 1,
+   "read_only": 1,
+   "default": "0",
+   "label": "Internal Promotional Allocation",
    "non_negative": 1,
    "reqd": 1
   }

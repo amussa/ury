@@ -7,14 +7,43 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from ury.ury.api.ury_kot_generate import (
+    _kot_execute,
     compare_two_array,
     create_cancel_kot_doc,
     create_order_items,
+    get_cancelled_order_items,
     get_removed_items,
 )
 
 
 class TestURYKOT(FrappeTestCase):
+    def test_cancelled_items_report_reduction_and_removal(self):
+        previous = [
+            {"item_code": "ITEM-A", "item_name": "Item A", "qty": 3},
+            {"item_code": "ITEM-B", "item_name": "Item B", "qty": 1},
+        ]
+        current = [
+            {"item_code": "ITEM-A", "item_name": "Item A", "qty": 1},
+        ]
+
+        self.assertEqual(
+            get_cancelled_order_items(current, previous),
+            [
+                {
+                    "item_code": "ITEM-A",
+                    "item_name": "Item A",
+                    "qty": -2.0,
+                    "comments": "",
+                },
+                {
+                    "item_code": "ITEM-B",
+                    "item_name": "Item B",
+                    "qty": 1.0,
+                    "comments": "",
+                },
+            ],
+        )
+
     def test_price_options_are_one_kitchen_line(self):
         items = [
             frappe._dict(
@@ -180,3 +209,33 @@ class TestURYKOT(FrappeTestCase):
         _fieldname, values = cancel_kot.append.call_args.args
         self.assertEqual(values["cancelled_qty"], 1.0)
         self.assertEqual(values["quantity"], 10.0)
+
+    @patch("ury.ury.api.ury_kot_generate.process_items_for_cancel_kot")
+    @patch("ury.ury.api.ury_kot_generate.frappe.get_doc")
+    def test_kot_execute_returns_cancel_ticket_and_uses_cancellation_reason(
+        self, get_doc, process_cancel
+    ):
+        get_doc.side_effect = [
+            frappe._dict(pos_profile="POS A"),
+            frappe._dict(name="POS A", custom_kot_naming_series="KOT-.#####"),
+        ]
+        process_cancel.return_value = {
+            "created_kots": [{"name": "CNCL-KOT-1", "production": "Counter"}],
+            "unrouted_items": [],
+        }
+
+        result = _kot_execute(
+            "INV-1",
+            "Walk In",
+            "Table 1",
+            [{"item": "ITEM-A", "item_name": "Item A", "qty": 1}],
+            [{"item_code": "ITEM-A", "item_name": "Item A", "qty": 3}],
+            "general order comment",
+            cancellation_reason="customer reduced quantity",
+        )
+
+        self.assertEqual(
+            result["cancelled_kots"],
+            [{"name": "CNCL-KOT-1", "production": "Counter"}],
+        )
+        self.assertEqual(process_cancel.call_args.args[4], "customer reduced quantity")

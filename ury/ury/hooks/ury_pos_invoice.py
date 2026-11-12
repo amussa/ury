@@ -93,7 +93,10 @@ def validate_invoice(doc, method):
                     f"to {current_items[item_code]['qty']})"
                 )
         
-        if removed_items or reduced_qty_items:
+        authorised_invoice = getattr(
+            frappe.flags, "ury_printed_item_reduction_invoice", None
+        )
+        if (removed_items or reduced_qty_items) and authorised_invoice != doc.name:
             error_msg = []
             if removed_items:
                 removed_item_names = [original_items[key]["display_name"] for key in removed_items]

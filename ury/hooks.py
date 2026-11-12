@@ -165,9 +165,13 @@ doc_events = {
         "before_insert":"ury.ury.api.ury_kot_order_number.set_last_invoice_in_pos_open",
         },
     "POS Closing Entry": {
+        "before_print": "ury.ury.printing.closing_guard.before_print",
         "before_save": "ury.ury.hooks.ury_pos_closing_entry.before_save",
         "validate":"ury.ury.hooks.ury_pos_closing_entry.validate",
         "before_update_after_submit": "ury.ury.hooks.ury_pos_closing_entry.refresh_commercial_summary_after_submit",
+        },
+    "Sub POS Closing": {
+        "before_print": "ury.ury.printing.closing_guard.before_print",
         },
     "URY Menu Course": {
 		"validate": "ury.ury.api.ury_menu_course_validation.validate_priority",

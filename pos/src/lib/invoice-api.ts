@@ -485,18 +485,6 @@ const MERGE_CANDIDATE_FIELDS = [
   'mobile_number',
 ] as const;
 
-function getBranchFromSession(): string {
-  const raw = sessionStorage.getItem('posProfile');
-  if (!raw) {
-    throw new Error('POS profile not loaded');
-  }
-  const profile = JSON.parse(raw) as { branch?: string };
-  if (!profile.branch) {
-    throw new Error('Branch not found in POS profile');
-  }
-  return profile.branch;
-}
-
 export async function getLinkedMergeSecondaries(): Promise<string[]> {
   const rows = await db.getDocList(DOCTYPES.POS_INVOICE, {
     fields: ['custom_merged_pos_invoice'],
@@ -514,6 +502,7 @@ export async function getLinkedMergeSecondaries(): Promise<string[]> {
 
 export interface GetMergeBillCandidatesParams {
   primaryInvoice: string;
+  branch: string;
   query?: string;
   page?: number;
   pageSize?: number;
@@ -522,12 +511,15 @@ export interface GetMergeBillCandidatesParams {
 
 export async function getMergeBillCandidates({
   primaryInvoice,
+  branch,
   query = '',
   page = 1,
   pageSize = MERGE_CANDIDATE_PAGE_SIZE,
   linkedSecondaries,
 }: GetMergeBillCandidatesParams): Promise<{ data: MergeBillCandidate[]; hasMore: boolean }> {
-  const branch = getBranchFromSession();
+  if (!branch) {
+    throw new Error(t('errors.pos_profile_not_loaded'));
+  }
   const secondaries = linkedSecondaries ?? (await getLinkedMergeSecondaries());
   const exclude = Array.from(new Set([primaryInvoice, ...secondaries]));
 

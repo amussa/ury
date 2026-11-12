@@ -25,6 +25,7 @@ interface BillMergeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   invoiceName: string;
+  branch: string;
   onConfirm: (secondaryInvoice: string) => Promise<void>;
 }
 
@@ -34,6 +35,7 @@ const BillMergeDialog = ({
   open,
   onOpenChange,
   invoiceName,
+  branch,
   onConfirm,
 }: BillMergeDialogProps) => {
   const [candidates, setCandidates] = useState<MergeBillCandidate[]>([]);
@@ -65,6 +67,7 @@ const BillMergeDialog = ({
       try {
         const { data, hasMore: more } = await getMergeBillCandidates({
           primaryInvoice: invoiceName,
+          branch,
           query: debouncedSearch,
           page: nextPage,
           linkedSecondaries: linkedSecondariesRef.current,
@@ -82,7 +85,7 @@ const BillMergeDialog = ({
         setBusy(false);
       }
     },
-    [debouncedSearch, invoiceName]
+    [branch, debouncedSearch, invoiceName]
   );
 
   useEffect(() => {
@@ -114,6 +117,7 @@ const BillMergeDialog = ({
 
         const { data, hasMore: more } = await getMergeBillCandidates({
           primaryInvoice: invoiceName,
+          branch,
           page: 1,
           linkedSecondaries: linkedSecondariesRef.current,
         });
@@ -136,7 +140,7 @@ const BillMergeDialog = ({
     return () => {
       cancelled = true;
     };
-  }, [open, invoiceName]);
+  }, [branch, open, invoiceName]);
 
   useEffect(() => {
     if (!open) return;

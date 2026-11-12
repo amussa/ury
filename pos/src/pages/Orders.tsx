@@ -997,6 +997,7 @@ export default function Orders() {
           open={showMergeDialog}
           onOpenChange={setShowMergeDialog}
           invoiceName={selectedOrder.name}
+          branch={posStore.posProfile?.branch || ''}
           onConfirm={handleMergeBill}
         />
       )}
