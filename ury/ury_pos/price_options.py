@@ -295,10 +295,17 @@ def get_item_price_options(
                 "is_default": False,
             },
         ]
+    for provider in frappe.get_hooks("ury_lot_price_options"):
+        result.update(frappe.get_attr(provider)(menu, base_rates, physical_availability,
+            item_codes=item_codes, exclude_invoice=exclude_invoice, lock=lock))
     return result
 
 
 def resolve_price_option(menu, item_code, option_id, base_rate, promotions_by_item=None):
+    for provider in frappe.get_hooks("ury_lot_resolve_option"):
+        option = frappe.get_attr(provider)(menu, item_code, option_id, base_rate)
+        if option is not None:
+            return option
     if promotions_by_item is None:
         promotions_by_item = group_menu_promotions(menu, [item_code])
     promotions = promotions_by_item.get(item_code, [])
@@ -506,6 +513,9 @@ def validate_price_option_row_prices(
     rate is rebuilt from the current Normal/Promotion option and the persisted
     audit inputs; a caller can never whitelist a free-form ``rate``.
     """
+    for provider in frappe.get_hooks("ury_lot_validate_prices"):
+        invoice_items = frappe.get_attr(provider)(invoice_items, menu, base_rates,
+            manual_discounts_authorized=manual_discounts_authorized)
     promoted_codes = list(base_rates)
     promotions_by_item = group_menu_promotions(
         menu, promoted_codes, for_update=True
@@ -828,7 +838,9 @@ def validate_pos_invoice_price_options(invoice):
         invoice.selling_price_list,
         for_update=True,
     )
-    exclude_invoice = None if invoice.is_new() else invoice.name
+    # A provider may reserve batches during before_validate, before the invoice
+    # is inserted. Its assigned name must also be excluded from availability.
+    exclude_invoice = invoice.name
     stock_details = _get_stock_details(
         validation_codes,
         _get_pos_profile_warehouse(invoice),

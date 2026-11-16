@@ -59,6 +59,7 @@ export interface OrderItem extends MenuItem {
   configurationRole?: 'main' | 'addon';
   configuredAddons?: Array<{ id: string; name: string; price: number }>;
   selectedPriceOption?: PriceOption;
+  gmLots?: string | null;
   manualDiscount?: ItemManualDiscount;
 }
 
@@ -265,6 +266,7 @@ const withStock = <T extends MenuItem>(item: T, stock?: StockAvailability): T =>
   const refreshedSelected = inferredSelected
     ? refreshedOptions?.find(option => option.id === inferredSelected.id) || inferredSelected
     : undefined;
+  const capturedOption = (item as OrderItem).gmLots && selected && refreshedSelected ? { ...refreshedSelected, rate: selected.rate } : refreshedSelected;
   return {
     ...item,
     available_qty: stock.total_available_qty ?? stock.available_qty,
@@ -273,7 +275,7 @@ const withStock = <T extends MenuItem>(item: T, stock?: StockAvailability): T =>
     stock_uom: stock.stock_uom,
     negative_stock_allowed: stock.negative_stock_allowed,
     price_options: refreshedOptions,
-    ...(refreshedSelected ? { selectedPriceOption: refreshedSelected } : {}),
+    ...(capturedOption ? { selectedPriceOption: capturedOption } : {}),
   } as T;
 };
 
@@ -1107,7 +1109,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
           const optionId = item.custom_ury_price_option || (
             menuItem?.price_options?.length ? 'standard' : null
           );
-          const selectedPriceOption = optionId
+          let selectedPriceOption = optionId
             ? menuItem?.price_options?.find(option => option.id === optionId) || {
                 id: optionId,
                 label: item.custom_ury_price_option_label || (optionId === 'standard'
@@ -1118,6 +1120,9 @@ export const usePOSStore = create<POSStore>((set, get) => ({
                 is_default: optionId === 'standard',
               }
             : undefined;
+          if (item.custom_gm_lots && selectedPriceOption) {
+            selectedPriceOption = { ...selectedPriceOption, rate: Number(item.custom_ury_rate_before_manual_discount || item.rate) };
+          }
           const orderItem = {
             ...(menuItem || {}),
             id: item.item_code,
@@ -1135,6 +1140,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
             tax_rate: 0,
             comment: item.comment || '',
             selectedPriceOption,
+            gmLots: item.custom_gm_lots,
             manualDiscount: getPersistedItemManualDiscount(item),
           };
           return {
