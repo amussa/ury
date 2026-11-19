@@ -29,7 +29,7 @@ class URYMenu(Document):
         menu_rates = {row.item: flt(row.rate) for row in self.items if not row.disabled}
         enabled_by_item = {}
         for option in self.price_options:
-            if option.item not in menu_rates:
+            if option.item not in menu_rates and cint(option.enabled):
                 frappe.throw(
                     _("Price option {0} refers to an item that is not enabled in this menu.").format(
                         frappe.bold(option.item)
@@ -57,7 +57,8 @@ class URYMenu(Document):
                         frappe.bold(option.item)
                     )
                 )
-            if cint(metadata.has_serial_no) or cint(metadata.has_batch_no):
+            supports_batch = any(frappe.get_attr(provider)(option.item) for provider in frappe.get_hooks("ury_lot_managed_item"))
+            if cint(metadata.has_serial_no) or (cint(metadata.has_batch_no) and not supports_batch):
                 frappe.throw(
                     _("Serialised or batched items are not supported by promotional quantities: {0}.").format(
                         frappe.bold(option.item)

@@ -1554,6 +1554,8 @@ def split_bill(source_invoice, items_to_move, customer=None):
             )
             new_invoice.invoice_created = 1
 
+        for provider in frappe.get_hooks("ury_lot_split_invoice"):
+            frappe.get_attr(provider)(source,new_invoice,move_map)
         new_invoice.insert()
         new_invoice.reload()
         frappe.db.set_value(
@@ -2120,6 +2122,8 @@ def _sync_order(
     # because ordered_qty already represents its complete replacement state.
     with _temporary_order_actor(opening.user if append_only else None):
         invoice.set_missing_values(for_validate=True)
+    for provider in frappe.get_hooks("ury_lot_prepare_order"):
+        frappe.get_attr(provider)(invoice, items, append_only=append_only)
     _assert_existing_order_items_unchanged(invoice, existing_item_snapshot)
     _assert_appended_item_prices_unchanged(appended_item_price_snapshot)
     ordered_qty = _aggregate_order_stock_qty(invoice.items)

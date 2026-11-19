@@ -13,6 +13,7 @@ export interface POSInvoiceItem {
   amount: number;
   discount_percentage: number;
   discount_amount: number;
+  custom_gm_lots?: string | null;
   custom_ury_price_option?: string | null;
   custom_ury_price_option_label?: string | null;
   custom_ury_rate_before_manual_discount?: number | null;
@@ -81,6 +82,7 @@ export interface SyncOrderRequest {
     qty: number;
     comment?: string;
     price_option?: string;
+    invoice_item?: string;
     manual_discount?: {
       type: 'Percent' | 'Amount';
       value: number;

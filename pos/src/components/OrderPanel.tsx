@@ -1,3 +1,4 @@
+import { lotLabel } from '../lib/gm-lots';
 import { useRef, useState } from 'react';
 import { Trash2, Edit, FrownIcon, Plus, Loader2, MessageSquare } from 'lucide-react';
 import { usePOSStore } from '../store/pos-store';
@@ -206,6 +207,7 @@ const OrderPanel = () => {
           qty: item.quantity,
           comment: item.comment || undefined,
           price_option: item.selectedPriceOption?.id,
+          invoice_item: item.gmLots ? item.uniqueId : undefined,
           manual_discount: item.manualDiscount,
         })),
         no_of_pax: 1,
@@ -395,6 +397,7 @@ const OrderPanel = () => {
                     {item.selectedVariant && (
                       <p className="text-sm text-gray-600">{item.selectedVariant.name}</p>
                     )}
+                    {item.gmLots && <p className="text-xs text-amber-800">Lote seleccionado: {lotLabel(item.gmLots)}</p>}
                     {item.selectedPriceOption && (
                       <p className="text-xs font-medium text-blue-700">
                         {t('cart.price_option', { option: item.selectedPriceOption.label })}

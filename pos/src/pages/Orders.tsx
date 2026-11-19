@@ -1,3 +1,4 @@
+import { lotLabel } from '../lib/gm-lots';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { CalendarDays, Clock, CreditCard, Gift, User, UserCheck, Receipt, Printer, Pencil, X, GitBranch, GitMerge, RefreshCcw } from 'lucide-react';
 import { Badge, Button, Card, CardContent } from '@ury/ui';
@@ -74,6 +75,7 @@ interface EditableInvoiceItem {
   amount: number;
   image?: string | null;
   description?: string | null;
+  custom_gm_lots?: string | null;
   custom_ury_price_option?: string | null;
   custom_ury_price_option_label?: string | null;
   custom_ury_rate_before_manual_discount?: number | null;
@@ -283,7 +285,7 @@ export default function Orders() {
       const items = (order.items || []).map(item => {
         const menuItem = posStore.menuItems.find(candidate => candidate.item === item.item_code);
         const optionId = item.custom_ury_price_option || null;
-        const selectedPriceOption = optionId
+        let selectedPriceOption = optionId
           ? menuItem?.price_options?.find(option => option.id === optionId) || {
               id: optionId,
               label: item.custom_ury_price_option_label || (optionId === 'standard'
@@ -295,6 +297,9 @@ export default function Orders() {
             }
           : undefined;
 
+        if (item.custom_gm_lots && selectedPriceOption) {
+          selectedPriceOption = { ...selectedPriceOption, rate: Number(item.custom_ury_rate_before_manual_discount || item.rate) };
+        }
         return {
           ...(menuItem || {}),
           id: item.item_code,
@@ -312,6 +317,7 @@ export default function Orders() {
           special_dish: 0 as const,
           tax_rate: 0,
           selectedPriceOption,
+          gmLots: item.custom_gm_lots,
           manualDiscount: getPersistedItemManualDiscount(item),
         };
       });
@@ -850,6 +856,7 @@ export default function Orders() {
                     <div key={index} className="flex justify-between items-start py-2 border-b border-gray-100">
                       <div className="flex-1">
                         <p className="text-sm font-medium text-gray-900">{item.item_name}</p>
+                        {item.custom_gm_lots && <p className="text-xs text-amber-800">Lote seleccionado: {lotLabel(item.custom_gm_lots)}</p>}
                         {item.custom_ury_price_option_label && (
                           <p className="text-xs font-medium text-blue-700">
                             {t('cart.price_option', { option: item.custom_ury_price_option_label })}
